@@ -1,0 +1,8 @@
+# The app
+customtkinter==6.0.0  # widgets; pinned because widgets.fast_scroll patches its scrollbar
+pillow==13.0.0        # icons, charts and the 3D images are drawn with Pillow
+numpy==2.5.4          # the 3D ray marcher and gradients
+
+# Development: tests and style checks
+pytest==9.2.0
+ruff==0.17.3

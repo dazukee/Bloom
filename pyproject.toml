@@ -1,0 +1,23 @@
+# Settings for the team's tools. The app itself does not read this file.
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"  # the code must also run on Python 3.13 (Mac fallback)
+
+[tool.ruff.lint]
+# E, W: PEP 8 layout. F: real mistakes. I: import order. N: naming.
+# B: common bugs. UP: modern syntax. D: docstrings on every public function.
+select = ["E", "W", "F", "I", "N", "B", "UP", "D"]
+# D105/D107: __init__ and dunder methods need no docstring.
+# E501: `ruff format` already wraps code; long user-facing strings may stay whole.
+ignore = ["D105", "D107", "E501"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D"]  # test names already say what they check
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
