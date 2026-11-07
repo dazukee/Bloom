@@ -21,7 +21,11 @@ class BbtPage(Page):
     """Log temperature and confirm ovulation with the 3-over-6 rule."""
 
     title = "Temperature"
-    subtitle = "Basal body temperature rises slightly after ovulation. Logging it every morning confirms when ovulation happened."
+    subtitle = "Your resting temperature rises slightly after ovulation. Logging every morning confirms when it happened."
+    banner = [
+        {"kind": "thermometer", "size": 92, "x": 0.66, "y": 0.5, "amp": 5, "hue": 0.08, "accent": (239, 68, 68)},
+    ]  # fmt: skip
+    banner_hue = 0.03
 
     @override
     def build(self) -> None:
@@ -88,14 +92,38 @@ class BbtPage(Page):
             widgets.button(
                 body, "Delete Reading", self._delete, kind="plain", icon="trash"
             ).grid(row=3, column=0, sticky="ew", pady=(8, 0))
+            disturbed = widgets.switch(
+                body,
+                "Leave this reading out",
+                bool(log.get("bbt_skip")),
+                command=lambda: self._set_skip(bool(disturbed.get())),
+            )
+            disturbed.grid(row=4, column=0, sticky="w", pady=(12, 0))
+            widgets.label(
+                body,
+                "For a cold, alcohol, a late night or a poor sleep: a day like that can look like a rise.",
+                "footnote",
+                "text_muted",
+                wraplength=250,
+            ).grid(row=5, column=0, sticky="w", pady=(2, 0))
             if bbt.is_fever(log["bbt_c"]):
                 widgets.note(
                     body,
                     "38.0 °C (100.4 °F) or higher is a fever, so this reading is left out of the ovulation chart.",
                     "warning",
                     260,
-                ).grid(row=4, column=0, sticky="ew", pady=(10, 0))
+                ).grid(row=6, column=0, sticky="ew", pady=(10, 0))
+            late = bbt.unusual_time_note(self.data["days"], self.day)
+            if late:
+                widgets.note(body, late, "info", 260).grid(
+                    row=7, column=0, sticky="ew", pady=(10, 0)
+                )
         return card
+
+    def _set_skip(self, value: bool) -> None:
+        daylog.set_value(self.data, self.day, "bbt_skip", True if value else None)
+        self.save("Left out of your chart" if value else "Back in your chart")
+        self.refresh()
 
     def _save(self) -> None:
         try:
@@ -122,6 +150,7 @@ class BbtPage(Page):
     def _delete(self) -> None:
         daylog.set_value(self.data, self.day, "bbt_c", None)
         daylog.set_value(self.data, self.day, "bbt_time", None)
+        daylog.set_value(self.data, self.day, "bbt_skip", None)
         self.save("Reading deleted")
         self.refresh()
 
@@ -148,7 +177,7 @@ class BbtPage(Page):
         card = widgets.Card(
             master,
             "This cycle",
-            f"{start:%b %d} to {end:%b %d}  ·  {len(readings)} readings",
+            f"{start:%b} {start.day} to {end:%b} {end.day}  ·  {len(readings)} readings",
             icon="activity",
         )
         if len(readings) < 2:
@@ -161,7 +190,17 @@ class BbtPage(Page):
             ).grid(row=0, column=0, sticky="w")
             widgets.Hero3D(
                 card.body,
-                [{"kind": "cube", "size": 70, "x": 0.5, "y": 0.5, "amp": 6}],
+                [
+                    {
+                        "kind": "thermometer",
+                        "size": 90,
+                        "x": 0.5,
+                        "y": 0.5,
+                        "amp": 5,
+                        "hue": 0.08,
+                        "accent": (239, 68, 68),
+                    }
+                ],
                 height=120,
                 gradient=False,
             ).grid(row=1, column=0, sticky="ew")
@@ -211,9 +250,9 @@ class BbtPage(Page):
                 row=0, column=0, sticky="w"
             )
             text = (
-                f"Your temperature rose on {shift.first_high:%b %d} and stayed above the coverline "
+                f"Your temperature rose on {shift.first_high:%b} {shift.first_high.day} and stayed above the coverline "
                 f"of {units.format_temp(shift.coverline_c, self.unit)}. Ovulation most likely "
-                f"happened around {shift.ovulation:%b %d}."
+                f"happened around {shift.ovulation:%b} {shift.ovulation.day}."
             )
             widgets.label(body, text, "callout", wraplength=280).grid(
                 row=1, column=0, sticky="w", pady=(10, 0)
@@ -224,7 +263,10 @@ class BbtPage(Page):
         if have < bbt.BASELINE_READINGS:
             text = f"{have} of the 6 baseline readings logged this cycle."
         else:
-            text = "Watching for 3 readings in a row above the coverline, the last 0.2 °C higher."
+            text = (
+                "Watching for 3 readings in a row above the coverline, the last 0.2 °C "
+                "higher (or a 4th reading above it)."
+            )
         widgets.label(body, text, "callout", "text_muted", wraplength=280).grid(
             row=1, column=0, sticky="w", pady=(4, 10)
         )

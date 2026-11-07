@@ -58,6 +58,8 @@ def parse_number(
     if not cleaned:
         raise ValueError(f"Enter your {label.lower()}.")
     try:
+        if "_" in cleaned:  # float() accepts "1_000"; a person never means that
+            raise ValueError
         value = float(cleaned)
     except ValueError:
         hint = f", e.g. {example}" if example else ""

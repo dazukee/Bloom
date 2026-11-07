@@ -23,7 +23,18 @@ FILE_VERSION = 1
 
 def new_users() -> dict:
     """Return an empty accounts dict, for the first run."""
-    return {"version": FILE_VERSION, "users": [], "last_username": None}
+    return {
+        "version": FILE_VERSION,
+        "users": [],
+        "last_username": None,
+        # How the login screen looks: the last user's font, colour and access needs.
+        "look": {
+            "font": "poppins",
+            "accent": "bloom",
+            "text_size": "default",
+            "high_contrast": False,
+        },
+    }
 
 
 def new_user_data() -> dict:
@@ -55,6 +66,33 @@ def new_user_data() -> dict:
             "temp_unit": "c",
             "bmi_standard": "cdc",
             "reduce_motion": False,
+            "accent": "bloom",
+            "font": "poppins",
+            "text_size": "default",
+            "transition": "rise",
+            "page_colors": False,  # off: every page banner uses the theme colour
+            "sparkles": True,
+            "card_glow": True,
+            "confetti": True,
+            "sound_on": True,
+            "sound_volume": 60,
+            "sound_pack": "chimes",
+            "sound_clicks": True,
+            "sound_alerts": True,
+            "sound_celebrate": True,
+            "start_page": "home",
+            "always_rail": False,
+            "confirm_logout": True,
+            # Accessibility
+            "high_contrast": False,
+            "bold_text": False,
+            "color_vision": "none",
+            "calendar_symbols": False,
+            "big_targets": False,
+            "simple_view": False,
+            "long_messages": False,
+            "speak_messages": False,
+            "speak_focus": False,
         },
         "periods": [],
         "weights": [],
@@ -121,6 +159,8 @@ def _users_from_json(raw: dict) -> dict:
 def _user_data_from_json(raw: dict) -> dict:
     """Convert the text dates of a loaded user data file."""
     data = _fill_missing(raw, new_user_data())
+    # Replaced by "page_colors" (off by default), so old files lose the old key.
+    data["settings"].pop("colorful_pages", None)
     data["profile"]["birth_date"] = _to_date(data["profile"]["birth_date"])
     if isinstance(data["profile"]["focus"], str):  # older files kept one reason
         data["profile"]["focus"] = [data["profile"]["focus"]]
@@ -197,6 +237,16 @@ def delete_user_data(user_id: str, data_dir: Path = DATA_DIR) -> None:
     user_data_path(user_id, data_dir).unlink(missing_ok=True)
 
 
+def _safe_cell(text: str) -> str:
+    """Stop a spreadsheet from running typed text as a formula."""
+    return "'" + text if text[:1] in ("=", "+", "-", "@") else text
+
+
+def write_text_file(path: Path, text: str) -> None:
+    """Write a report the user asked to save."""
+    path.write_text(text, encoding="utf-8")
+
+
 def export_csv(data: dict, path: Path) -> int:
     """Write every day's log to a CSV file for a spreadsheet; return the row count."""
     columns = [
@@ -206,7 +256,8 @@ def export_csv(data: dict, path: Path) -> int:
         "alcohol", "fruit_veg", "kcal",
     ]  # fmt: skip
     rows = 0
-    with path.open("w", newline="", encoding="utf-8") as handle:
+    # utf-8-sig: Excel only reads accented letters right with this marker.
+    with path.open("w", newline="", encoding="utf-8-sig") as handle:
         writer = csv.writer(handle)
         writer.writerow(columns)
         for day in sorted(data["days"]):
@@ -219,6 +270,8 @@ def export_csv(data: dict, path: Path) -> int:
                     row.append(sum(w["minutes"] for w in log.get("workouts", [])))
                 elif column == "kcal":
                     row.append(sum(m["kcal"] for m in log.get("meals", [])))
+                elif column == "note":
+                    row.append(_safe_cell(log.get("note", "")))
                 else:
                     row.append(log.get(column, ""))
             writer.writerow(row)

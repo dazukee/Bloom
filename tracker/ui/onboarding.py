@@ -10,17 +10,25 @@ from datetime import date
 
 import customtkinter as ctk
 
-from tracker import bmi, cycle, profile, units, validators
+from tracker import bmi, cycle, growth, profile, units, validators, vitals
 from tracker.ui import anim, icons, theme, widgets
 
 STEPS = ("welcome", "about", "body", "cycle", "lifestyle", "focus", "done")
 STEP_GOALS = ("5,000", "8,000", "10,000", "12,000")
 
 HERO = [
-    {"kind": "sphere", "size": 150, "x": 0.34, "y": 0.34, "amp": 10},
-    {"kind": "torus", "size": 130, "x": 0.70, "y": 0.58, "amp": 8, "phase": 1.4},
-    {"kind": "cube", "size": 84, "x": 0.26, "y": 0.68, "amp": 7, "phase": 2.6},
-]
+    {
+        "kind": "flower",
+        "size": 190,
+        "x": 0.5,
+        "y": 0.38,
+        "amp": 10,
+        "base": (168, 85, 247),
+        "glow": (253, 224, 255),
+    },
+    {"kind": "heart", "size": 64, "x": 0.16, "y": 0.2, "amp": 7, "phase": 1.4, "hue": 0.95},
+    {"kind": "drop", "size": 54, "x": 0.84, "y": 0.62, "amp": 7, "phase": 2.6, "hue": 0.93},
+]  # fmt: skip
 
 
 class Onboarding(ctk.CTkFrame):
@@ -316,7 +324,7 @@ class Onboarding(ctk.CTkFrame):
                 "Weight",
                 "55.5",
                 unit="kg",
-                value=f"{weight:g}" if weight else "",
+                value=f"{weight:.1f}" if weight else "",
             )
         self._place(weight_field, 4)
         preview = ctk.CTkFrame(frame, fg_color="transparent", width=1, height=1)
@@ -331,19 +339,21 @@ class Onboarding(ctk.CTkFrame):
             for child in preview.winfo_children():
                 child.destroy()
             try:
+                centimetres = read_height()
                 value = bmi.calculate_bmi(
                     validators.parse_weight(weight_field.get(), "lb" if us else "kg"),
-                    read_height(),
+                    centimetres,
                 )
             except ValueError:
                 return
+            result = growth.assess(value, centimetres, self._months())
             widgets.label(preview, f"BMI {value}", "headline").grid(
                 row=0, column=0, padx=(0, 10)
             )
             widgets.badge(
                 preview,
-                bmi.classify_bmi(value),
-                "good" if bmi.classify_bmi(value) == bmi.HEALTHY_WEIGHT else "info",
+                result.category,
+                "good" if result.category == bmi.HEALTHY_WEIGHT else "info",
             ).grid(row=0, column=1)
 
         fields = [weight_field] + ([feet_field, inch_field] if us else [height_field])
@@ -372,6 +382,10 @@ class Onboarding(ctk.CTkFrame):
             return ok
 
         return validate
+
+    def _months(self) -> int | None:
+        born = self.answers["birth_date"]
+        return growth.age_in_months(born, self.today) if born else None
 
     def _switch_units(self, us: bool) -> None:
         read_height, weight_field, _ = self._body_fields
@@ -489,9 +503,11 @@ class Onboarding(ctk.CTkFrame):
         grid = ctk.CTkFrame(frame, fg_color="transparent")
         self._place(grid, 3)
         widgets.label(grid, "Sleep goal", "label").grid(row=0, column=0, sticky="w")
-        sleep = widgets.Stepper(
-            grid, self.answers["sleep_h"], 0.5, 5, 11, fmt="{:g}", unit="h"
-        )
+        age = bmi.calculate_age(self.answers["birth_date"], self.today)
+        # The goal starts at what the CDC recommends for this age, or more.
+        least = vitals.recommended_sleep(age)
+        start_sleep = max(self.answers["sleep_h"], least + (0.5 if age < 18 else 0))
+        sleep = widgets.Stepper(grid, start_sleep, 0.5, 5, 12, fmt="{:g}", unit="h")
         sleep.grid(row=1, column=0, sticky="w", pady=(6, 14))
         widgets.label(grid, "Water goal", "label").grid(
             row=0, column=1, sticky="w", padx=(40, 0)
@@ -569,8 +585,9 @@ class Onboarding(ctk.CTkFrame):
         )
         value = bmi.calculate_bmi(a["weight_kg"], a["height_cm"])
         weight_unit = "lb" if a["us_units"] else "kg"
+        category = growth.assess(value, a["height_cm"], self._months()).category
         rows = [
-            ("gauge", "BMI", f"{value} ({bmi.classify_bmi(value)})"),
+            ("gauge", "BMI", f"{value} ({category})"),
             ("activity", "Activity", profile.ACTIVITY_LEVELS[a["activity_level"]][0]),
             ("moon", "Sleep goal", f"{a['sleep_h']:g} hours"),
             ("cup", "Water goal", f"{a['water_ml']:,} ml"),
@@ -600,9 +617,9 @@ class Onboarding(ctk.CTkFrame):
             )
         card.body.columnconfigure(1, weight=1)
         celebration = widgets.Hero3D(frame, [
-            {"kind": "sphere", "size": 46, "x": 0.3, "y": 0.5, "amp": 6},
-            {"kind": "torus", "size": 56, "x": 0.5, "y": 0.5, "amp": 7, "phase": 1.0},
-            {"kind": "cube", "size": 40, "x": 0.7, "y": 0.5, "amp": 6, "phase": 2.0},
+            {"kind": "heart", "size": 46, "x": 0.3, "y": 0.5, "amp": 6, "hue": 0.95},
+            {"kind": "flower", "size": 72, "x": 0.5, "y": 0.5, "amp": 7, "phase": 1.0},
+            {"kind": "drop", "size": 44, "x": 0.7, "y": 0.5, "amp": 6, "phase": 2.0, "hue": 0.93},
         ], height=110, gradient=False, bg="bg")  # fmt: skip
         self._place(celebration, 3)
         return None

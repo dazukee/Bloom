@@ -4,7 +4,7 @@ from typing import override
 
 import customtkinter as ctk
 
-from tracker import bmi, profile, units, validators
+from tracker import bmi, growth, profile, units, validators
 from tracker.ui import anim, theme, widgets
 from tracker.ui.page import Page
 
@@ -24,13 +24,30 @@ class BmiPage(Page):
     """Weight in, BMI out, with healthy range and history."""
 
     title = "BMI"
+    banner = [
+        {"kind": "sphere", "size": 70, "x": 0.56, "y": 0.5, "amp": 6, "hue": 0.58},
+        {"kind": "torus", "size": 62, "x": 0.66, "y": 0.42, "amp": 5, "phase": 1.3, "hue": 0.5},
+    ]  # fmt: skip
+    banner_hue = 0.58
+
+    def _months(self) -> int | None:
+        born = self.data["profile"]["birth_date"]
+        return growth.age_in_months(born, self.today) if born else None
+
+    def _assessment(self, value: float) -> growth.BmiAssessment:
+        return growth.assess(
+            value,
+            self.data["profile"]["height_cm"],
+            self._months(),
+            self.settings["bmi_standard"],
+        )
 
     @override
     def subheading(self) -> str:
         value = self._current_bmi()
         if value is None:
             return "Add your height in Settings and log a weight to see your BMI."
-        return f"Your BMI is {value} ({bmi.classify_bmi(value, self.settings['bmi_standard']).lower()})."
+        return f"Your BMI is {value} ({self._assessment(value).category.lower()})."
 
     def _current_bmi(self) -> float | None:
         weight = profile.current_weight(self.data)
@@ -43,14 +60,30 @@ class BmiPage(Page):
     def build(self) -> None:
         standard = self.settings["bmi_standard"]
         label = next(name for name, key in STANDARDS.items() if key == standard)
-        widgets.segmented(
-            self.actions, list(STANDARDS), label, command=self._set_standard
-        ).grid(row=0, column=0)
+        if not growth.applies(self._months()):  # under 20, percentiles replace these
+            self.standard_control = widgets.segmented(
+                self.actions, list(STANDARDS), label, command=self._set_standard
+            )
+            self.standard_control.grid(row=0, column=0)
+            self.standard_control.glass = self._glass_standard
         grid = widgets.ResponsiveGrid(self.body, min_column=260, max_columns=3)
         grid.grid(row=0, column=0, sticky="ew")
         grid.add(lambda: self._log_card(grid))
         grid.add(lambda: self._gauge_card(grid), span=2, shrink=True)
         grid.add(lambda: self._history_card(grid), span=3)
+
+    def _glass_standard(self, backdrop: str) -> None:
+        """Restyle the standard switch for the banner behind it."""
+        pill = widgets.glass_color(backdrop)
+        self.standard_control.configure(
+            bg_color=backdrop,
+            fg_color=pill,
+            unselected_color=pill,
+            unselected_hover_color=widgets.mix(pill, "#FFFFFF", 0.1),
+            selected_color=widgets.mix(pill, "#000000", 0.35),
+            selected_hover_color=widgets.mix(pill, "#000000", 0.25),
+            text_color="#FFFFFF",
+        )
 
     def _set_standard(self, label: str) -> None:
         self.settings["bmi_standard"] = STANDARDS[label]
@@ -98,11 +131,10 @@ class BmiPage(Page):
             icon="check",
             height=theme.BIG_CONTROL_HEIGHT,
         ).grid(row=2, column=0, sticky="ew")
-        age = profile.age_of(self.data["profile"], self.today)
-        if age is not None and not bmi.adult_categories_apply(age):
+        if growth.applies(self._months()):
             widgets.note(
                 body,
-                "BMI categories are for adults 20 and older. For younger people, doctors use growth charts for age.",
+                "Under 20, BMI is compared with other girls your age on the CDC growth charts, because bodies are still growing.",
                 "info",
                 260,
             ).grid(row=3, column=0, sticky="ew", pady=(12, 0))
@@ -136,10 +168,20 @@ class BmiPage(Page):
         card = widgets.Card(master, "Where you are", icon="gauge")
         body = card.body
         value = self._current_bmi()
-        standard = self.settings["bmi_standard"]
+        result = self._assessment(value) if value is not None else None
+        rows = (
+            result.bands
+            if result
+            else tuple(
+                (upper, color)
+                for upper, _, color in bmi.CATEGORY_TABLES[
+                    self.settings["bmi_standard"]
+                ]
+            )
+        )
         bands = []
         previous = SCALE_LOW
-        for upper, _, color in bmi.CATEGORY_TABLES[standard]:
+        for upper, color in rows:
             end = min(upper, SCALE_HIGH)
             bands.append((_fraction(previous), _fraction(end), color))
             previous = end
@@ -154,11 +196,15 @@ class BmiPage(Page):
                 row=0, column=1, sticky="w"
             )
             return card
-        category = bmi.classify_bmi(value, standard)
-        color = bmi.category_color(value, standard)
+        category = result.category
+        color = result.color
+        gauge.words = f"BMI gauge. {value}, {category}."
         number = widgets.label(body, "0.0", "number_xl")
         number.grid(row=0, column=1, sticky="w")
-        anim.count_up(number, value, "{:.1f}")
+        if widgets.page_animates(number):
+            anim.count_up(number, value, "{:.1f}")
+        else:
+            number.configure(text=f"{value:.1f}")
         tone = (
             "good"
             if category == bmi.HEALTHY_WEIGHT
@@ -168,12 +214,17 @@ class BmiPage(Page):
                 else ("info" if color == "fertile" else "danger")
             )
         )
-        widgets.badge(body, category, tone).grid(row=1, column=1, sticky="w")
-        low, high = bmi.healthy_weight_range(
-            self.data["profile"]["height_cm"], standard
-        )
+        shown = category
+        if result.percentile is not None:
+            shown = f"{category}, {result.percentile:.0f}th percentile for age"
+        elif bmi.obesity_class(value) and category == bmi.OBESITY:
+            shown = f"{category}, class {bmi.obesity_class(value)}"
+        widgets.badge(body, shown, tone).grid(row=1, column=1, sticky="w")
+        low, high = result.healthy_low_kg, result.healthy_high_kg
         unit = self.settings["weight_unit"]
         text = f"A healthy range for your height is {units.format_weight(low, unit)} to {units.format_weight(high, unit)}."
+        if result.percentile is not None:
+            text = f"At your age and height, a healthy range is {units.format_weight(low, unit)} to {units.format_weight(high, unit)}."
         widgets.label(body, text, "callout", "text_muted", wraplength=240).grid(
             row=2, column=1, sticky="w", pady=(10, 0)
         )
@@ -186,20 +237,20 @@ class BmiPage(Page):
         ).grid(row=3, column=1, sticky="w", pady=(8, 0))
         legend = ctk.CTkFrame(body, fg_color="transparent")
         legend.grid(row=4, column=0, columnspan=2, sticky="w", pady=(12, 0))
-        for column, (upper, name, band_color) in enumerate(
-            bmi.CATEGORY_TABLES[standard]
+        for column, ((name, limit), (_, band_color)) in enumerate(
+            zip(result.names, result.bands, strict=True)
         ):
+            row, column = divmod(column, 2)
             ctk.CTkFrame(
                 legend,
                 width=10,
                 height=10,
                 corner_radius=5,
                 fg_color=theme.pair(band_color),
-            ).grid(row=0, column=column * 2, padx=(0, 5))
-            limit = "" if upper == float("inf") else f" <{upper:g}"
-            widgets.label(legend, f"{name}{limit}", "footnote", "text_muted").grid(
-                row=0, column=column * 2 + 1, padx=(0, 14)
-            )
+            ).grid(row=row, column=column * 2, padx=(0, 5))
+            widgets.label(
+                legend, f"{name} {limit}".strip(), "footnote", "text_muted"
+            ).grid(row=row, column=column * 2 + 1, sticky="w", padx=(0, 14))
         return card
 
     # History ---------------------------------------------------------------------------------
@@ -222,7 +273,7 @@ class BmiPage(Page):
             round(units.kg_to_lb(e["weight_kg"]) if unit == "lb" else e["weight_kg"], 1)
             for e in entries
         ]
-        labels = [e["date"].strftime("%b %d") for e in entries]
+        labels = [f"{e['date']:%b} {e['date'].day}" for e in entries]
         widgets.LineChart(
             card.body,
             values,
@@ -236,7 +287,7 @@ class BmiPage(Page):
         change = values[-1] - values[0]
         direction = "up" if change > 0 else "down"
         text = (
-            f"{abs(change):.1f} {unit} {direction} since {entries[0]['date']:%b %d}."
+            f"{abs(change):.1f} {unit} {direction} since {entries[0]['date']:%b} {entries[0]['date'].day}."
             if abs(change) >= 0.1
             else "Steady since your first weigh-in here."
         )

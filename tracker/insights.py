@@ -15,6 +15,10 @@ from tracker import activity, bbt, cycle, daylog, journal, nutrition, profile, v
 
 TONE_ORDER = {"danger": 0, "warning": 1, "info": 2, "good": 3}
 PATTERN_WINDOW_DAYS = 120
+MIN_PATTERN_DAYS = 5  # each side of a comparison, so a few odd days prove nothing
+FAST_WEIGHT_CHANGE = 0.05  # 5% of body weight
+FAST_WEIGHT_WINDOW_DAYS = 30
+FERTILE_MUCUS = ("egg white", "watery")
 
 
 def _insight(
@@ -30,15 +34,29 @@ def _plural(count: int, word: str) -> str:
 
 
 def prediction_for(data: dict) -> cycle.CyclePrediction | None:
-    """Return the cycle prediction, using the profile's usual lengths as defaults."""
+    """Return the cycle prediction, using the profile's usual lengths as defaults.
+
+    When this cycle's temperature or LH tests show ovulation, the next period is
+    counted from it, using the person's own usual gap once past cycles show one.
+    """
     p = data["profile"]
     if not p.get("track_cycle", True):
         return None
-    return cycle.predict_cycle(
+    prediction = cycle.predict_cycle(
         data["periods"],
         p.get("cycle_length", cycle.DEFAULT_CYCLE_LENGTH),
         p.get("period_length", cycle.DEFAULT_PERIOD_LENGTH),
     )
+    if prediction is None:
+        return None
+    last_day = prediction.last_start + timedelta(days=cycle.MISSED_LOG_DAYS)
+    sign = bbt.ovulation_sign(data["days"], prediction.last_start, last_day)
+    if sign is None:
+        return prediction
+    usual_gap = bbt.usual_days_to_period(
+        data["days"], cycle.period_starts(data["periods"])
+    )
+    return cycle.with_ovulation_sign(prediction, sign[0], sign[1], usual_gap)
 
 
 def phase_today(data: dict, today: date) -> str | None:
@@ -46,6 +64,11 @@ def phase_today(data: dict, today: date) -> str | None:
     prediction = prediction_for(data)
     period_length = data["profile"].get("period_length", cycle.DEFAULT_PERIOD_LENGTH)
     return cycle.phase_on(today, data["periods"], prediction, period_length)
+
+
+def age_for(data: dict, today: date) -> int | None:
+    """Return the user's age today, or None when no birth date is saved."""
+    return profile.age_of(data["profile"], today)
 
 
 def current_shift(data: dict, today: date) -> bbt.ThermalShift | None:
@@ -106,8 +129,17 @@ def cycle_insights(data: dict, today: date) -> list[dict]:
         )]  # fmt: skip
 
     found = []
+    age = age_for(data, today)
     days = cycle.days_until(prediction.next_start, today)
-    if days < 0:
+    since_last = (today - prediction.last_start).days
+    if since_last >= cycle.NO_PERIOD_ALERT_DAYS:
+        found.append(_insight(
+            "warning", "drop", f"No period logged for {since_last} days",
+            "If you have had one, log it so predictions stay useful. If you truly have "
+            "not and are not pregnant, 3 months without a period is worth raising with a doctor.",
+            "cycle",
+        ))  # fmt: skip
+    elif days < 0:
         found.append(_insight(
             "info", "drop", f"Period {_plural(-days, 'day')} late",
             "Late periods are common: stress, illness and travel can shift a cycle. "
@@ -130,34 +162,63 @@ def cycle_insights(data: dict, today: date) -> list[dict]:
         ))  # fmt: skip
 
     if prediction.fertile_start <= today <= prediction.fertile_end:
-        ovulation = prediction.ovulation.strftime("%b %d")
+        ovulation = f"{prediction.ovulation:%b} {prediction.ovulation.day}"
+        known = prediction.basis != "calendar"
+        when = f"around {ovulation}" + (
+            f" (from your {prediction.basis})" if known else ""
+        )
         if profile.has_focus(data["profile"], "conceive"):
-            text = f"Your best days to conceive, especially the 2 days before ovulation (around {ovulation})."
+            text = f"Your best days to conceive are the 2 days before ovulation and the day itself; it is {when}."
         elif profile.has_focus(data["profile"], "avoid"):
             text = "Predicted fertile days are estimates and are not birth control."
         else:
-            text = (
-                f"Estimated fertile window; ovulation is expected around {ovulation}."
-            )
+            text = f"Estimated fertile window; ovulation is {when}."
         found.append(_insight("info", "sparkle", "Fertile window", text, "cycle"))
+
+    mucus = daylog.peek_day(data, today).get("mucus")
+    if mucus in FERTILE_MUCUS and not cycle.is_stale(prediction, today):
+        found.append(_insight(
+            "info", "sparkle", "A fertile sign today",
+            f"{mucus.capitalize()} mucus usually appears in the days just before ovulation.",
+            "cycle",
+        ))  # fmt: skip
 
     shift = current_shift(data, today)
     if shift is not None:
         found.append(_insight(
             "good", "thermometer", "Ovulation confirmed",
-            f"Your temperature rose on {shift.first_high:%b %d}, so ovulation most likely "
-            f"happened around {shift.ovulation:%b %d}.", "bbt",
+            f"Your temperature rose on {shift.first_high:%b} {shift.first_high.day}, so ovulation most likely "
+            f"happened around {shift.ovulation:%b} {shift.ovulation.day}.", "bbt",
         ))  # fmt: skip
 
-    recent = cycle.cycle_lengths(cycle.period_starts(data["periods"]))[
+    recent = cycle.usable_lengths(cycle.period_starts(data["periods"]))[
         -cycle.CYCLES_TO_AVERAGE :
     ]
-    unusual = cycle.lengths_outside_typical_range(recent)
+    unusual = cycle.lengths_outside_typical_range(recent, age)
+    low, high = cycle.typical_range(age)
     if len(unusual) >= 2:
         found.append(_insight(
             "warning", "drop", "Cycles outside the typical range",
-            f"{len(unusual)} of your last {len(recent)} cycles were outside 24-38 days. "
+            f"{len(unusual)} of your last {len(recent)} cycles were outside {low}-{high} days. "
             "If this continues, consider talking to a doctor.", "cycle",
+        ))  # fmt: skip
+    elif len(recent) >= 3:
+        spread = max(recent) - min(recent)
+        allowed = cycle.allowed_variation(age)
+        if spread > allowed:
+            found.append(_insight(
+                "info", "drop", f"Your cycles vary by {spread} days",
+                f"Up to {allowed} days counts as regular at your age, so predictions will be "
+                "less exact. If this is new for you, mention it to a doctor.", "cycle",
+            ))  # fmt: skip
+
+    last_periods = sorted(data["periods"], key=lambda p: p["start"])[-3:]
+    long_ones = cycle.prolonged_periods(last_periods)
+    if len(long_ones) >= 2:
+        found.append(_insight(
+            "warning", "drop", "Your periods have been long",
+            f"{len(long_ones)} of your last {len(last_periods)} lasted over 8 days. "
+            "Periods that long are worth mentioning to a doctor.", "cycle",
         ))  # fmt: skip
     return found
 
@@ -169,6 +230,7 @@ def habit_insights(data: dict, now: datetime) -> list[dict]:
     goals = data["goals"]
     found = []
 
+    age = age_for(data, today)
     debt = vitals.sleep_debt(data["days"], goals["sleep_h"], today)
     if debt >= 5:
         found.append(_insight(
@@ -185,27 +247,40 @@ def habit_insights(data: dict, now: datetime) -> list[dict]:
         ))  # fmt: skip
 
     weekly = activity.weekly_moderate_minutes(data["days"], today)
-    if weekly >= activity.WHO_WEEKLY_MINUTES:
+    weekly_goal = activity.weekly_goal_minutes(age)
+    if weekly >= weekly_goal:
         found.append(_insight(
-            "good", "activity", "150 active minutes reached",
+            "good", "activity", f"{weekly_goal} active minutes reached",
             f"{weekly} active minutes in the last 7 days meets the WHO recommendation.", "activity",
         ))  # fmt: skip
-    elif weekly >= 100:
+    elif weekly >= weekly_goal * 2 / 3:
         found.append(_insight(
-            "info", "activity", f"{activity.WHO_WEEKLY_MINUTES - weekly} active minutes to go",
-            f"{weekly} of the 150 minutes WHO recommends each week.", "activity",
+            "info", "activity", f"{weekly_goal - weekly} active minutes to go",
+            f"{weekly} of the {weekly_goal} minutes WHO recommends each week.", "activity",
         ))  # fmt: skip
 
-    if log.get("caffeine_mg", 0) > nutrition.CAFFEINE_LIMIT_MG:
+    conceiving = profile.has_focus(data["profile"], "conceive")
+    if log.get("caffeine_mg", 0) > nutrition.caffeine_limit(age, conceiving):
         found.append(
             _insight(
                 "warning",
                 "cup",
                 "A lot of caffeine today",
-                nutrition.caffeine_note(log["caffeine_mg"])[0],
+                nutrition.caffeine_note(log["caffeine_mg"], conceiving, age)[0],
                 "nutrition",
             )
         )
+
+    pressure = vitals.bp_average(data["days"], today)
+    if pressure is not None and pressure[2] >= vitals.READINGS_FOR_AVERAGE:
+        systolic, diastolic, count = pressure
+        category, tone = vitals.bp_category(systolic, diastolic)
+        if tone == vitals.WARNING:
+            found.append(_insight(
+                "warning", "heart", f"Blood pressure averaging {systolic}/{diastolic}",
+                f"That is in the {category} range across {count} readings. An average "
+                "like this is worth showing to a health professional.", "vitals",
+            ))  # fmt: skip
 
     streak = daylog.logging_streak(data, today)
     if streak >= 3:
@@ -214,6 +289,27 @@ def habit_insights(data: dict, now: datetime) -> list[dict]:
             "You have logged something every day. Small daily check-ins add up.", None,
         ))  # fmt: skip
     return found
+
+
+def body_insights(data: dict, today: date) -> list[dict]:
+    """Return notes about weight: a fast change is worth a conversation."""
+    start = today - timedelta(days=FAST_WEIGHT_WINDOW_DAYS)
+    recent = sorted(
+        (e for e in data["weights"] if start <= e["date"] <= today),
+        key=lambda e: e["date"],
+    )
+    if len(recent) < 2 or (recent[-1]["date"] - recent[0]["date"]).days < 7:
+        return []
+    first, last = recent[0]["weight_kg"], recent[-1]["weight_kg"]
+    change = abs(last - first) / first
+    if change < FAST_WEIGHT_CHANGE:
+        return []
+    direction = "down" if last < first else "up"
+    return [_insight(
+        "warning", "scale", f"Weight {direction} {change:.0%} in a month",
+        "That is a fast change. If you did not plan it, it is worth mentioning to a "
+        "health professional.", "bmi",
+    )]  # fmt: skip
 
 
 def pattern_insights(data: dict, today: date) -> list[dict]:
@@ -229,7 +325,7 @@ def pattern_insights(data: dict, today: date) -> list[dict]:
             if start <= day <= today and "mood" in log:
                 phase = cycle.phase_on(day, data["periods"], prediction, period_length)
                 (luteal if phase == cycle.LUTEAL else other).append(log["mood"])
-        if len(luteal) >= 3 and len(other) >= 3:
+        if len(luteal) >= MIN_PATTERN_DAYS and len(other) >= MIN_PATTERN_DAYS:
             luteal_avg = sum(luteal) / len(luteal)
             other_avg = sum(other) / len(other)
             if other_avg - luteal_avg >= 0.7:
@@ -261,11 +357,12 @@ def pattern_insights(data: dict, today: date) -> list[dict]:
 
     pairs = journal.sleep_mood_pairs(data["days"], today)
     if len(pairs) >= 7:
-        split = journal.split_average(pairs, vitals.MIN_SLEEP_HOURS)
+        enough = vitals.recommended_sleep(age_for(data, today))
+        split = journal.split_average(pairs, enough)
         if split is not None and split[0] - split[1] >= 0.5:
             found.append(_insight(
                 "good", "moon", "Sleep lifts your mood",
-                f"After 7+ hours of sleep your mood averages {split[0]:.1f}, and "
+                f"After {enough:g}+ hours of sleep your mood averages {split[0]:.1f}, and "
                 f"{split[1]:.1f} after shorter nights.", "vitals",
             ))  # fmt: skip
     return found
@@ -276,6 +373,7 @@ def build_insights(data: dict, now: datetime, limit: int = 6) -> list[dict]:
     today = now.date()
     found = alert_insights(data, today)
     found += cycle_insights(data, today)
+    found += body_insights(data, today)
     found += pattern_insights(data, today)
     found += habit_insights(data, now)
     found.sort(key=lambda item: TONE_ORDER[item["tone"]])  # stable: keeps topic order
@@ -305,7 +403,7 @@ def daily_checklist(data: dict, today: date) -> list[dict]:
     moved = activity.active_minutes(log.get("workouts", [])) >= goals["active_min"]
     moved = moved or log.get("steps", 0) >= goals["steps"]
     items.append({
-        "label": f"Move {goals['active_min']} min or walk {goals['steps']:,} steps",
+        "label": f"Move {goals['active_min']} min or {goals['steps']:,} steps",
         "done": moved,
         "page": "activity",
     })  # fmt: skip

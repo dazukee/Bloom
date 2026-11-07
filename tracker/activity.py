@@ -4,8 +4,9 @@ Pure logic: no customtkinter, no file access.
 
 Calories use MET values (approximate, from the Compendium of Physical
 Activities): kcal per minute = MET x 3.5 x weight_kg / 200.
-WHO recommends at least 150 minutes of moderate activity a week; a vigorous
-minute counts as two moderate minutes.
+WHO recommends at least 150 minutes of moderate activity a week for adults, a
+vigorous minute counting as two, plus muscle strengthening on 2 days. Under 18,
+it recommends an average of 60 minutes a day.
 """
 
 from datetime import date, timedelta
@@ -31,6 +32,9 @@ WORKOUTS = {
 MODERATE_MET = 3.0
 VIGOROUS_MET = 6.0
 WHO_WEEKLY_MINUTES = 150
+WHO_TEEN_WEEKLY_MINUTES = 420  # 60 minutes a day, for ages 5-17
+WHO_STRENGTH_DAYS = 2
+STRENGTH_WORKOUTS = ("Strength training", "Pilates", "HIIT")
 
 
 def workout_kcal(met: float, weight_kg: float, minutes: float) -> int:
@@ -71,6 +75,24 @@ def weekly_moderate_minutes(days: dict, today: date) -> int:
         log = days.get(today - timedelta(days=offset), {})
         total += moderate_minutes(log.get("workouts", []))
     return total
+
+
+def weekly_goal_minutes(age_years: int | None = None) -> int:
+    """Return the WHO weekly active-minute goal for this age."""
+    if age_years is not None and age_years < 18:
+        return WHO_TEEN_WEEKLY_MINUTES
+    return WHO_WEEKLY_MINUTES
+
+
+def strength_days(days: dict, today: date) -> int:
+    """Return how many of the last 7 days include a muscle-strengthening workout."""
+    count = 0
+    for offset in range(7):
+        log = days.get(today - timedelta(days=offset), {})
+        workouts = log.get("workouts", [])
+        if any(w.get("type") in STRENGTH_WORKOUTS for w in workouts):
+            count += 1
+    return count
 
 
 def day_kcal(workouts: list[dict], weight_kg: float | None) -> int:

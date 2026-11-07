@@ -9,12 +9,18 @@ from tracker import cycle, daylog, insights, journal
 from tracker.ui import theme, widgets
 from tracker.ui.page import Page
 
+NOTE_SAVE_DELAY_MS = 800
+
 
 class JournalPage(Page):
     """Mood, energy, stress, symptoms and a note for any day."""
 
     title = "Journal"
-    subtitle = "How you feel, in a few taps. Choices save as you make them."
+    subtitle = "How you feel, in a few taps. Everything saves as you go."
+    banner = [
+        {"kind": "smile", "size": 84, "x": 0.68, "y": 0.5, "amp": 6, "hue": 0.13, "accent": (88, 28, 135)},
+    ]  # fmt: skip
+    banner_hue = 0.78
 
     @override
     def build(self) -> None:
@@ -24,6 +30,7 @@ class JournalPage(Page):
             row=0, column=0
         )
         self.log = daylog.peek_day(self.data, self.day)
+        self.note_job = None
         grid = widgets.ResponsiveGrid(self.body, min_column=260, max_columns=3)
         grid.grid(row=0, column=0, sticky="ew")
         grid.add(lambda: self._feel_card(grid), span=2)
@@ -65,14 +72,23 @@ class JournalPage(Page):
         self.note_box.grid(row=0, column=0, sticky="ew")
         if self.log.get("note"):
             self.note_box.insert("1.0", self.log["note"])
-        widgets.button(
-            card.body, "Save Note", self._save_note, kind="secondary", icon="check"
-        ).grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        # Saved a moment after typing stops, so a note can't be lost by leaving.
+        self.note_job = None
+        self.note_box.bind("<KeyRelease>", self._note_typed, add="+")
+        widgets.tab_moves_on(self.note_box._textbox)
+        widgets.label(
+            card.body, "Saves by itself as you type.", "footnote", "text_muted"
+        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
         return card
+
+    def _note_typed(self, _event) -> None:
+        if self.note_job:
+            self.after_cancel(self.note_job)
+        self.note_job = self.after(NOTE_SAVE_DELAY_MS, self._save_note)
 
     def _symptoms_card(self, master) -> widgets.Card:
         card = widgets.Card(
-            master, "Symptoms", "Tap everything you notice today", icon="journal"
+            master, "Symptoms", "Tap everything you notice", icon="journal"
         )
         widgets.ChipGrid(
             card.body,
@@ -85,6 +101,9 @@ class JournalPage(Page):
         return card
 
     def _change_day(self, day) -> None:
+        if self.note_job:  # the note belongs to the day being left
+            self.after_cancel(self.note_job)
+            self._save_note()
         self.day = day
         self.refresh()
 
@@ -93,9 +112,13 @@ class JournalPage(Page):
         self.save(f"{what} saved")
 
     def _save_note(self) -> None:
+        self.note_job = None
         text = self.note_box.get("1.0", "end").strip()
-        daylog.set_value(self.data, self.day, "note", text or None)
-        self.save("Note saved")
+        if text != self.log.get("note", ""):
+            daylog.set_value(self.data, self.day, "note", text or None)
+            self.log = daylog.peek_day(self.data, self.day)
+            self.save()
+            self.built_version = self.app.data_version  # the box is already current
 
     def _patterns_card(self, master) -> widgets.Card:
         start = self.today - timedelta(days=60)

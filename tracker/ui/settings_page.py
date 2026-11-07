@@ -1,5 +1,6 @@
-"""Settings: profile, goals, preferences, account manager and about."""
+"""Settings: profile, goals, look, accessibility, sound, account and about."""
 
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog
@@ -7,24 +8,99 @@ from typing import override
 
 import customtkinter as ctk
 
-from tracker import auth, profile, storage, units, validators
-from tracker.ui import anim, theme, widgets
+from tracker import auth, profile, report, sound, storage, units, validators
+from tracker.ui import anim, effects, sfx, speech, theme, widgets
 from tracker.ui.page import Page
 
-TABS = ("Profile", "Goals", "Preferences", "Account", "About")
+TABS = (
+    "Profile",
+    "Goals",
+    "Appearance",
+    "Accessibility",
+    "Sound",
+    "Preferences",
+    "Account",
+    "About",
+)
+TEXT_SIZES = {
+    "Small": "small",
+    "Default": "default",
+    "Large": "large",
+    "Extra large": "xlarge",
+}
+TRANSITIONS = {"Rise": "rise", "Slide": "slide", "Fade": "fade", "None": "none"}
+START_PAGES = {"Today": "home", "My Garden": "garden", "Cycle": "cycle"}
+READABLE_FONTS = ("atkinson", "lexend", "opendyslexic")
+LOOK_DEFAULTS = (
+    "appearance accent font text_size transition page_colors sparkles card_glow "
+    "confetti sound_on sound_volume sound_pack sound_clicks sound_alerts "
+    "sound_celebrate high_contrast bold_text color_vision calendar_symbols "
+    "big_targets simple_view long_messages speak_messages speak_focus reduce_motion"
+).split()
+# name: (who it helps, the settings it sets)
+ACCESS_PRESETS = {
+    "Low vision": (
+        "Extra large text, high contrast and a clearer font",
+        {
+            "text_size": "xlarge",
+            "high_contrast": True,
+            "bold_text": True,
+            "font": "atkinson",
+            "big_targets": True,
+            "long_messages": True,
+            "calendar_symbols": True,
+        },
+    ),
+    "Dyslexia": (
+        "A dyslexia-friendly font, larger text and fewer distractions",
+        {
+            "font": "opendyslexic",
+            "text_size": "large",
+            "sparkles": False,
+            "long_messages": True,
+        },
+    ),
+    "Motion sensitive": (
+        "No animation, confetti or sparkles",
+        {
+            "reduce_motion": True,
+            "confetti": False,
+            "sparkles": False,
+            "transition": "none",
+            "simple_view": True,
+        },
+    ),
+    "Colour blind": (
+        "Red-green safe colours, with letters on the calendar",
+        {"color_vision": "red-green", "calendar_symbols": True},
+    ),
+    "Screen reading": (
+        "Reads messages and what the keyboard reaches",
+        {"speak_messages": True, "speak_focus": True, "long_messages": True},
+    ),
+}
 APPEARANCE = {"System": "system", "Light": "light", "Dark": "dark"}
 SOURCES = (
-    "CDC: Adult BMI categories",
+    "CDC: Adult BMI categories; 2000 BMI-for-age growth charts (under 20)",
     "WHO Western Pacific Region (2000): Asia-Pacific BMI cut-offs",
     "Office on Women's Health: Your menstrual cycle; Trying to conceive (calendar method)",
-    "NHS: Fertility in the menstrual cycle",
-    "CDC / ACC-AHA: Blood pressure categories",
+    "NHS: Fertility in the menstrual cycle; oxygen readings",
+    "FIGO 2018: Normal cycle length, regularity and period length",
+    "ACOG Committee Opinion 651: Cycles in girls and teens",
+    "Fehring et al. (2006), Marquette University: 1,665 cycles used to test predictions",
+    "Sensiplan: The 3-over-6 temperature rule",
+    "CDC / ACC-AHA: Blood pressure categories; American Heart Association: low blood pressure",
     "CDC: How much sleep do I need?",
     "WHO: Physical activity fact sheet",
-    "FDA: How much caffeine is too much?",
+    "FDA, ACOG and American Academy of Pediatrics: Caffeine limits",
+    "US Dietary Guidelines 2025-2030: Alcohol",
+    "NIH Office of Dietary Supplements: Iron, calcium and folate needs",
+    "USDA FoodData Central: Food calories and protein",
     "Compendium of Physical Activities: MET values",
-    "Mifflin-St Jeor equation (1990)",
+    "Mifflin-St Jeor equation (1990); Institute of Medicine (2005) energy equations",
     "OWASP Password Storage Cheat Sheet",
+    "WCAG 2.2: Contrast and keyboard access",
+    "Fonts: Poppins, Nunito, Quicksand, Outfit, Figtree, Fraunces, DM Sans, Atkinson Hyperlegible, Lexend, OpenDyslexic (SIL Open Font License)",
 )
 
 
@@ -32,14 +108,18 @@ class SettingsPage(Page):
     """Everything set during onboarding can be changed here."""
 
     title = "Settings"
-    subtitle = "Your profile, goals, preferences and account."
+    subtitle = "Your profile, goals, look, accessibility and account."
+    banner = [
+        {"kind": "gear", "size": 90, "x": 0.84, "y": 0.5, "amp": 5},
+        {"kind": "gear", "size": 46, "x": 0.72, "y": 0.34, "amp": 4, "phase": 1.4},
+    ]
 
     @override
     def build(self) -> None:
         tab = getattr(self.app, "settings_tab", "Profile")
-        widgets.segmented(
-            self.body, list(TABS), tab, command=self._show_tab, height=38
-        ).grid(row=0, column=0, sticky="w", pady=(0, theme.GUTTER))
+        widgets.TabBar(self.body, list(TABS), tab, self._show_tab).grid(
+            row=0, column=0, sticky="ew", pady=(0, theme.GUTTER - 6)
+        )
         self.holder = ctk.CTkFrame(self.body, fg_color="transparent")
         self.holder.grid(row=1, column=0, sticky="ew")
         self.holder.columnconfigure(0, weight=1)
@@ -152,9 +232,7 @@ class SettingsPage(Page):
             unit="days",
         )
         self.cycle_stepper.grid(row=2, column=0, sticky="w", pady=(6, 12))
-        widgets.label(cbody, "Period length", "label").grid(
-            row=1, column=1, sticky="w", padx=(30, 0)
-        )
+        widgets.label(cbody, "Period length", "label").grid(row=3, column=0, sticky="w")
         self.period_stepper = widgets.Stepper(
             cbody,
             p["period_length"],
@@ -163,16 +241,14 @@ class SettingsPage(Page):
             profile.MAX_PERIOD_LENGTH,
             unit="days",
         )
-        self.period_stepper.grid(
-            row=2, column=1, sticky="w", padx=(30, 0), pady=(6, 12)
-        )
+        self.period_stepper.grid(row=4, column=0, sticky="w", pady=(6, 12))
         widgets.button(
             cbody,
             "Save Cycle Settings",
             self._save_cycle,
             kind="secondary",
             icon="check",
-        ).grid(row=3, column=0, columnspan=2, sticky="w")
+        ).grid(row=5, column=0, columnspan=2, sticky="w")
         grid.add(cycle_card)
 
     def _read_height(self) -> float:
@@ -240,7 +316,7 @@ class SettingsPage(Page):
                 row=row, column=0, sticky="w", pady=6
             )
             stepper = widgets.Stepper(
-                body, goals[key], step, low, high, fmt=fmt, unit=unit, value_width=130
+                body, goals[key], step, low, high, fmt=fmt, unit=unit, value_width=108
             )
             stepper.grid(row=row, column=1, sticky="e", pady=6)
             self.goal_steppers[key] = stepper
@@ -266,34 +342,390 @@ class SettingsPage(Page):
             self.data["goals"][key] = value if key == "sleep_h" else int(value)
         self.save("Goals saved")
 
-    # Preferences ----------------------------------------------------------------------------
+    # Appearance -----------------------------------------------------------------------------
 
-    def _tab_preferences(self, grid) -> None:
+    def _tab_appearance(self, grid) -> None:
         s = self.settings
-        card = widgets.Card(grid, "Appearance", icon="sun")
+        card = widgets.Card(grid, "Theme", "Light or dark, and your colour", icon="sun")
         current = next(
             name for name, key in APPEARANCE.items() if key == s["appearance"]
         )
         widgets.segmented(
             card.body, list(APPEARANCE), current, command=self._set_appearance
         ).grid(row=0, column=0, sticky="w")
-        motion = widgets.switch(
+        swatches = ctk.CTkFrame(card.body, fg_color="transparent")
+        swatches.grid(row=1, column=0, sticky="w", pady=(16, 8))
+        for index, (key, (name, _)) in enumerate(theme.ACCENTS.items()):
+            shade = theme.swatch_color(key)
+            chosen = s["accent"] == key
+            swatch = ctk.CTkButton(
+                swatches,
+                text="✓" if chosen else "",
+                width=38,
+                height=38,
+                corner_radius=19,
+                fg_color=shade,
+                hover_color=shade,
+                border_width=3 if chosen else 0,
+                border_color=theme.pair("text"),
+                font=theme.font("headline"),
+                text_color="#FFFFFF",
+                command=sfx.with_sound(
+                    lambda k=key: self._restyle("accent", k), "toggle"
+                ),
+            )
+            swatch.grid(row=0, column=index, padx=(0, 8))
+            widgets.Tooltip(swatch, name)
+            widgets.keyboard(swatch, swatch.invoke, f"{name} colour")
+        row = 2
+        if self.data["profile"]["track_cycle"]:
+            follow = widgets.switch(
+                card.body,
+                "Follow my cycle",
+                s["accent"] == theme.FOLLOW_CYCLE,
+                command=lambda: self._restyle(
+                    "accent", theme.FOLLOW_CYCLE if follow.get() else "bloom"
+                ),
+            )
+            follow.grid(row=row, column=0, sticky="w", pady=(8, 0))
+            widgets.label(
+                card.body,
+                "The colour changes with your phase: rose, forest, coral, then purple.",
+                "footnote",
+                "text_muted",
+                wraplength=380,
+            ).grid(row=row + 1, column=0, sticky="w", pady=(4, 0))
+            row += 2
+        colorful = widgets.switch(
             card.body,
-            "Reduce motion",
-            s["reduce_motion"],
-            command=lambda: self._set(
-                "reduce_motion", bool(motion.get()), "Motion preference saved"
-            ),
+            "A different colour for each page",
+            s["page_colors"],
+            command=lambda: self._restyle("page_colors", bool(colorful.get())),
         )
-        motion.grid(row=1, column=0, sticky="w", pady=(16, 0))
-        widgets.label(
-            card.body,
-            "Turns off slides, counting numbers and floating 3D objects.",
-            "footnote",
-            "text_muted",
-        ).grid(row=2, column=0, sticky="w", pady=(4, 0))
+        colorful.grid(row=row, column=0, sticky="w", pady=(10, 0))
         grid.add(card)
 
+        fonts = widgets.Card(grid, "Font", "Applies to the whole app", icon="edit")
+        for row, (key, (name, display, _, about)) in enumerate(
+            theme.FONT_CHOICES.items()
+        ):
+            if key not in READABLE_FONTS:
+                self._font_row(fonts.body, row, key, name, display, about)
+        grid.add(fonts)
+
+        fx = widgets.Card(grid, "Motion and effects", icon="sparkle")
+        widgets.label(fx.body, "Page transition", "label").grid(
+            row=0, column=0, sticky="w", pady=(0, 6)
+        )
+        current = next(n for n, v in TRANSITIONS.items() if v == s["transition"])
+        widgets.segmented(
+            fx.body,
+            list(TRANSITIONS),
+            current,
+            command=lambda n: self._set_effect("transition", TRANSITIONS[n]),
+        ).grid(row=1, column=0, sticky="w", pady=(0, 12))
+        switches = (
+            ("Sparkles on banners", "sparkles"),
+            ("Glow on the card under the mouse", "card_glow"),
+            ("Confetti when you reach a goal", "confetti"),
+        )
+        for row, (text, key) in enumerate(switches, start=2):
+            self._effect_switch(fx.body, text, key).grid(
+                row=row, column=0, sticky="w", pady=4
+            )
+        widgets.button(
+            fx.body,
+            "Preview Confetti",
+            lambda: effects.confetti(self.app),
+            kind="plain",
+        ).grid(row=5, column=0, sticky="w", pady=(10, 0))
+        grid.add(fx)
+
+    def _font_row(self, master, row, key, name, display, about) -> None:
+        chosen = self.settings["font"] == key
+        choice = ctk.CTkButton(
+            master,
+            text=f"{'✓  ' if chosen else ''}{name}",
+            anchor="w",
+            height=theme.control_height(),
+            corner_radius=theme.RADIUS_CONTROL,
+            font=ctk.CTkFont(
+                family=display,
+                size=round(14 * theme.FONT_SIZE_FACTOR.get(key, 1.0)),
+                weight="bold",
+            ),
+            fg_color=theme.pair("primary_soft" if chosen else "surface_alt"),
+            hover_color=theme.pair("primary_soft_hover"),
+            text_color=theme.pair("primary_text" if chosen else "text"),
+            command=sfx.with_sound(lambda k=key: self._restyle("font", k), "toggle"),
+        )
+        choice.grid(row=row, column=0, sticky="ew", pady=3)
+        widgets.label(master, about, "footnote", "text_muted", wraplength=170).grid(
+            row=row, column=1, sticky="w", padx=(10, 0)
+        )
+        widgets.keyboard(choice, choice.invoke, f"{name} font. {about}")
+
+    def _effect_switch(self, master, text: str, key: str):
+        widget = widgets.switch(
+            master,
+            text,
+            self.settings[key],
+            command=lambda: self._set_effect(key, bool(widget.get())),
+        )
+        return widget
+
+    def _set_effect(self, key: str, value) -> None:
+        self.settings[key] = value
+        self.app.save_user_data()
+        self.app.apply_settings(rebuild=key in ("sparkles", "reduce_motion"))
+
+    def _restyle(self, key: str, value) -> None:
+        """Save a look setting and rebuild the app so everything shows it."""
+        self.settings[key] = value
+        self.app.save_user_data()
+        self.app.apply_settings(rebuild=True)
+
+    # Accessibility --------------------------------------------------------------------------
+
+    def _tab_accessibility(self, grid) -> None:
+        s = self.settings
+        quick = widgets.Card(
+            grid,
+            "Quick setups",
+            "One click to set several options together. You can fine-tune them below.",
+            icon="eye_access",
+        )
+        box = ctk.CTkFrame(quick.body, fg_color="transparent")
+        box.grid(row=0, column=0, sticky="ew")
+        box.columnconfigure(1, weight=1)
+        for row, (name, (about, _)) in enumerate(ACCESS_PRESETS.items()):
+            widgets.button(
+                box,
+                name,
+                lambda n=name: self._apply_preset(n),
+                kind="secondary",
+                width=150,
+            ).grid(row=row, column=0, sticky="w", pady=3)
+            widgets.label(box, about, "footnote", "text_muted", wraplength=270).grid(
+                row=row, column=1, sticky="w", padx=(10, 0)
+            )
+        grid.add(quick)
+
+        see = widgets.Card(grid, "Seeing", icon="eye")
+        body = see.body
+        widgets.label(body, "Text and control size", "label").grid(
+            row=0, column=0, sticky="w", pady=(0, 6)
+        )
+        current = next(n for n, v in TEXT_SIZES.items() if v == s["text_size"])
+        widgets.segmented(
+            body,
+            list(TEXT_SIZES),
+            current,
+            command=lambda n: self._restyle("text_size", TEXT_SIZES[n]),
+        ).grid(row=1, column=0, sticky="w", pady=(0, 12))
+        widgets.label(body, "Colour vision", "label").grid(
+            row=2, column=0, sticky="w", pady=(0, 6)
+        )
+        visions = {info[0]: key for key, info in theme.COLOR_VISION.items()}
+        current = next(n for n, v in visions.items() if v == s["color_vision"])
+        widgets.segmented(
+            body,
+            list(visions),
+            current,
+            command=lambda n: self._restyle("color_vision", visions[n]),
+        ).grid(row=3, column=0, sticky="w", pady=(0, 10))
+        options = (
+            ("High contrast", "high_contrast", "Pure black and white, thicker borders"),
+            ("Bold text", "bold_text", "Every word in the heavier weight"),
+            ("Letters on the calendar", "calendar_symbols", "P, E, F and O, so colour is not the only cue"),
+            ("Larger click targets", "big_targets", "Taller buttons and boxes"),
+        )  # fmt: skip
+        self._access_switches(body, options, 4)
+        grid.add(see)
+
+        fonts = widgets.Card(
+            grid,
+            "Easier-to-read fonts",
+            "Designed with readers in mind",
+            icon="journal",
+        )
+        for row, key in enumerate(READABLE_FONTS):
+            name, display, _, about = theme.FONT_CHOICES[key]
+            self._font_row(fonts.body, row, key, name, display, about)
+        grid.add(fonts)
+
+        calm = widgets.Card(grid, "Motion and focus", icon="moon")
+        options = (
+            ("Reduce motion", "reduce_motion", "Turns off slides, counting numbers and floating art"),
+            ("Hide decorative art", "simple_view", "Plain titles and no 3D objects, for fewer distractions"),
+            ("Keep messages on screen longer", "long_messages", "About 8 seconds instead of 3"),
+        )  # fmt: skip
+        self._access_switches(calm.body, options, 0)
+        grid.add(calm)
+
+        hear = widgets.Card(
+            grid,
+            "Reading aloud",
+            "Uses the voice built into your computer" if speech.available() else "Not available on this computer",
+            icon="speaker",
+        )  # fmt: skip
+        options = (
+            ("Read messages aloud", "speak_messages", "Confirmations, warnings and errors"),
+            ("Read what the keyboard reaches", "speak_focus", "Says each control as you Tab to it"),
+        )  # fmt: skip
+        self._access_switches(hear.body, options, 0)
+        actions = ctk.CTkFrame(hear.body, fg_color="transparent")
+        actions.grid(row=5, column=0, sticky="w", pady=(12, 0))
+        widgets.button(
+            actions, "Read This Page (F2)", self.app.read_page, kind="secondary", icon="speaker"
+        ).grid(row=0, column=0, padx=(0, 8))  # fmt: skip
+        widgets.button(actions, "Stop", speech.stop, kind="plain", width=70).grid(
+            row=0, column=1
+        )
+        grid.add(hear)
+
+        keys = widgets.Card(
+            grid,
+            "Using the keyboard",
+            "Everything works without a mouse",
+            icon="keyboard",
+        )
+        widgets.label(
+            keys.body,
+            "Tab moves between controls and a bright ring shows where you are. Enter or "
+            "Space uses a control, and Ctrl+K finds anything.",
+            "callout",
+            "text_muted",
+            wraplength=380,
+        ).grid(row=0, column=0, sticky="w")
+        widgets.button(
+            keys.body, "See All Shortcuts (F1)", self.app.show_help, kind="secondary", icon="keyboard"
+        ).grid(row=1, column=0, sticky="w", pady=(12, 0))  # fmt: skip
+        grid.add(keys)
+
+    def _access_switches(self, master, options, row: int) -> None:
+        for text, key, about in options:
+            widget = self._restyle_switch(master, text, key)
+            widget.grid(row=row, column=0, sticky="w", pady=(6, 0))
+            widgets.label(master, about, "footnote", "text_muted", wraplength=360).grid(
+                row=row + 1, column=0, sticky="w", padx=(52, 0)
+            )
+            row += 2
+
+    def _restyle_switch(self, master, text: str, key: str):
+        widget = widgets.switch(
+            master,
+            text,
+            self.settings[key],
+            command=lambda: self._restyle(key, bool(widget.get())),
+        )
+        return widget
+
+    def _apply_preset(self, name: str) -> None:
+        self.settings.update(ACCESS_PRESETS[name][1])
+        self.app.save_user_data()
+        self.app.apply_settings(rebuild=True)
+        widgets.toast(self.app, f"{name} setup applied")
+
+    # Sound ----------------------------------------------------------------------------------
+
+    def _tab_sound(self, grid) -> None:
+        s = self.settings
+        card = widgets.Card(
+            grid, "Sound effects", "Made by Bloom itself, from math", icon="speaker"
+        )
+        body = card.body
+        self._sound_switch(body, "Play sound effects", "sound_on").grid(
+            row=0, column=0, sticky="w"
+        )
+        widgets.label(body, "Volume", "label").grid(
+            row=1, column=0, sticky="w", pady=(14, 4)
+        )
+        volume = ctk.CTkSlider(
+            body,
+            from_=10,
+            to=100,
+            number_of_steps=9,
+            progress_color=theme.pair("primary"),
+            button_color=theme.pair("primary"),
+            button_hover_color=theme.pair("primary_hover"),
+            fg_color=theme.pair("border"),
+        )
+        volume.set(s["sound_volume"])
+        volume.grid(row=2, column=0, sticky="ew")
+        volume.bind(
+            "<ButtonRelease-1>", lambda _e: self._set_volume(round(volume.get()))
+        )
+
+        def nudge(step: int) -> None:
+            volume.set(volume.get() + step)
+            self._set_volume(round(volume.get()))
+
+        widgets.keyboard(
+            volume, lambda: self._set_volume(round(volume.get())), "Volume"
+        )
+        volume._canvas.bind("<Left>", lambda _e: nudge(-10), add="+")
+        volume._canvas.bind("<Right>", lambda _e: nudge(10), add="+")
+        widgets.label(body, "Sound pack", "label").grid(
+            row=3, column=0, sticky="w", pady=(14, 6)
+        )
+        packs = {info[0]: key for key, info in sound.PACKS.items()}
+        current = next(n for n, v in packs.items() if v == s["sound_pack"])
+        widgets.segmented(
+            body, list(packs), current, command=lambda n: self._set_pack(packs[n])
+        ).grid(row=4, column=0, sticky="w")
+        grid.add(card)
+
+        which = widgets.Card(grid, "Which sounds play", icon="check")
+        switches = (
+            ("Clicks and page changes", "sound_clicks"),
+            ("Saved, warning, log in and log out", "sound_alerts"),
+            ("Celebrations and breathing", "sound_celebrate"),
+        )
+        for row, (text, key) in enumerate(switches):
+            self._sound_switch(which.body, text, key).grid(
+                row=row, column=0, sticky="w", pady=4
+            )
+        tests = ctk.CTkFrame(which.body, fg_color="transparent")
+        tests.grid(row=3, column=0, sticky="w", pady=(12, 0))
+        samples = (
+            ("Click", "click"),
+            ("Saved", "success"),
+            ("Warning", "warning"),
+            ("Celebrate", "celebrate"),
+        )
+        for column, (text, event) in enumerate(samples):
+            sample = widgets.small_button(tests, text, lambda e=event: sfx.play(e))
+            sample.configure(width=78)
+            sample.grid(row=0, column=column, padx=(0, 6))
+        grid.add(which)
+
+    def _sound_switch(self, master, text: str, key: str):
+        widget = widgets.switch(
+            master,
+            text,
+            self.settings[key],
+            command=lambda: self._set_sound(key, bool(widget.get())),
+        )
+        return widget
+
+    def _set_sound(self, key: str, value) -> None:
+        self.settings[key] = value
+        self.app.save_user_data()
+        sfx.configure(self.settings)
+
+    def _set_volume(self, value: int) -> None:
+        self._set_sound("sound_volume", value)
+        sfx.play("success")
+
+    def _set_pack(self, key: str) -> None:
+        self._set_sound("sound_pack", key)
+        sfx.play("success")
+
+    # Preferences ----------------------------------------------------------------------------
+
+    def _tab_preferences(self, grid) -> None:
+        s = self.settings
         units_card = widgets.Card(grid, "Units", icon="scale")
         body = units_card.body
         options = (
@@ -322,6 +754,47 @@ class SettingsPage(Page):
             ).grid(row=row, column=1, sticky="e", pady=6)
         grid.add(units_card)
 
+        behaviour = widgets.Card(grid, "How Bloom behaves", icon="gear")
+        bbody = behaviour.body
+        widgets.label(bbody, "Open on this page", "label").grid(
+            row=0, column=0, sticky="w", pady=(0, 6)
+        )
+        current = next(n for n, v in START_PAGES.items() if v == s["start_page"])
+        widgets.option_menu(
+            bbody,
+            list(START_PAGES),
+            current,
+            command=lambda n: self._set(
+                "start_page", START_PAGES[n], "Start page saved"
+            ),
+        ).grid(row=1, column=0, sticky="w", pady=(0, 12))
+        rail = widgets.switch(
+            bbody,
+            "Always use the narrow icon sidebar",
+            s["always_rail"],
+            command=lambda: self._restyle("always_rail", bool(rail.get())),
+        )
+        rail.grid(row=2, column=0, sticky="w", pady=4)
+        ask = widgets.switch(
+            bbody,
+            "Ask before logging out",
+            s["confirm_logout"],
+            command=lambda: self._set("confirm_logout", bool(ask.get()), "Saved"),
+        )
+        ask.grid(row=3, column=0, sticky="w", pady=4)
+        widgets.button(
+            bbody, "Reset Look and Sound to Default", self._reset_look, kind="plain"
+        ).grid(row=4, column=0, sticky="w", pady=(12, 0))
+        grid.add(behaviour)
+
+    def _reset_look(self) -> None:
+        defaults = storage.new_user_data()["settings"]
+        for key in LOOK_DEFAULTS:
+            self.settings[key] = defaults[key]
+        self.app.save_user_data()
+        self.app.apply_settings(rebuild=True)
+        widgets.toast(self.app, "Look and sound reset")
+
     def _set(self, key: str, value, message: str) -> None:
         self.settings[key] = value
         if key == "reduce_motion":
@@ -345,7 +818,9 @@ class SettingsPage(Page):
         )
         widgets.label(
             body,
-            f"Member since {user['created_on']:%B %d, %Y}".replace(" 0", " "),
+            f"Member since {user['created_on']:%B} {user['created_on'].day}, {user['created_on'].year}".replace(
+                " 0", " "
+            ),
             "callout",
             "text_muted",
         ).grid(row=1, column=0, sticky="w", pady=(2, 14))
@@ -361,11 +836,26 @@ class SettingsPage(Page):
         widgets.button(
             actions, "Log Out", self.app.confirm_log_out, kind="plain", icon="logout"
         ).grid(row=0, column=1)
+        widgets.button(
+            body,
+            "Create a Doctor Summary",
+            self._doctor_summary,
+            kind="secondary",
+            icon="report",
+        ).grid(row=4, column=0, sticky="w", pady=(10, 0))
+        widgets.label(
+            body,
+            "A one-page summary of your logs to print or show a clinician.",
+            "footnote",
+            "text_muted",
+            wraplength=400,
+        ).grid(row=5, column=0, sticky="w", pady=(4, 0))
         widgets.label(
             body,
             "To switch accounts, log out and log in as someone else.",
             "footnote",
             "text_muted",
+            wraplength=400,
         ).grid(row=3, column=0, sticky="w", pady=(10, 0))
         grid.add(card)
 
@@ -434,6 +924,30 @@ class SettingsPage(Page):
             widgets.toast(self.app, "Couldn't save there. Close the file or pick another folder.", "warning")  # fmt: skip
             return
         widgets.toast(self.app, f"Exported {rows} days to {Path(target).name}")
+
+    def _doctor_summary(self) -> None:
+        default = f"bloom-summary-{self.today:%Y%m%d}.html"
+        target = filedialog.asksaveasfilename(
+            parent=self.app,
+            title="Save your health summary",
+            defaultextension=".html",
+            initialfile=default,
+            filetypes=[("Web page you can print", "*.html")],
+        )
+        if not target:
+            return
+        text = report.doctor_summary_html(
+            self.data, self.app.user["username"], self.today
+        )
+        try:
+            storage.write_text_file(Path(target), text)
+        except OSError:
+            widgets.toast(
+                self.app, "Couldn't save there. Pick another folder.", "warning"
+            )
+            return
+        webbrowser.open(Path(target).as_uri())
+        widgets.toast(self.app, f"Summary saved as {Path(target).name}")
 
     def _change_password(self) -> None:
         for field in (self.current_pw, self.new_pw, self.confirm_pw):
@@ -527,7 +1041,7 @@ class SettingsPage(Page):
         card = widgets.Card(
             grid,
             f"{theme.APP_NAME}: {theme.APP_TAGLINE}",
-            "Version 1.0  ·  COMPE 02 final project",
+            "Version 2.0  ·  COMPE 02 final project",
             icon="sparkle",
         )
         body = card.body
@@ -542,7 +1056,7 @@ class SettingsPage(Page):
         )
         widgets.label(
             body,
-            "Ctrl+1 to Ctrl+9 open the sidebar pages in order. Enter submits forms. Esc closes dialogs.",
+            "Ctrl+K finds anything, F1 lists every shortcut, and F2 reads the page aloud.",
             "callout",
             "text_muted",
             wraplength=420,
@@ -555,7 +1069,10 @@ class SettingsPage(Page):
             wraplength=420,
         ).grid(row=3, column=0, sticky="w", pady=(12, 0))
         widgets.label(
-            body, f"Today is {datetime.now():%A, %B %d, %Y}.", "footnote", "text_muted"
+            body,
+            f"Today is {datetime.now():%A, %B} {datetime.now().day}, {datetime.now().year}.",
+            "footnote",
+            "text_muted",
         ).grid(row=4, column=0, sticky="w")
         grid.add(card)
         sources = widgets.Card(

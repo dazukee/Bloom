@@ -98,6 +98,15 @@ def _drop_points() -> list[tuple[float, float]]:
     return points
 
 
+def _palette_points() -> list[tuple[float, float]]:
+    points = []
+    for step in range(32):
+        angle = math.radians(step * 360 / 32 - 40)
+        radius = 8.8 if not -30 < step * 360 / 32 - 40 - 90 < 30 else 8.0
+        points.append((12 + radius * math.cos(angle), 12 + radius * math.sin(angle)))
+    return points
+
+
 def _moon_points() -> list[tuple[float, float]]:
     outer = []
     for i in range(41):
@@ -238,6 +247,49 @@ def _draw(name: str, pen: _Pen) -> None:  # noqa: C901 (one branch per icon)
                 (10, 10),
             ]
         )
+    elif name == "copy":
+        pen.rect(8.5, 8.5, 20.5, 20.5, 2.5)
+        pen.line(
+            (15.5, 8.5), (15.5, 5.5), (15.5, 3.5), (3.5, 3.5), (3.5, 15.5), (8.5, 15.5)
+        )
+    elif name == "search":
+        pen.circle(10.5, 10.5, 6.5)
+        pen.line((15.5, 15.5), (20.5, 20.5))
+    elif name == "speaker":
+        pen.line((4, 9.5), (8, 9.5), (13, 5), (13, 19), (8, 14.5), (4, 14.5), (4, 9.5))
+        pen.arc(14, 12, 3.5, -50, 50)
+        pen.arc(14, 12, 6.8, -50, 50)
+    elif name == "eye_access":
+        pen.circle(12, 5, 2)
+        pen.line((4.5, 9), (12, 10.5), (19.5, 9))
+        pen.line((12, 10.5), (12, 15), (8, 21))
+        pen.line((12, 15), (16, 21))
+    elif name == "palette":
+        pen.shape(_palette_points())
+        pen.circle(8, 9, 1.1, fill=True)
+        pen.circle(12.5, 6.8, 1.1, fill=True)
+        pen.circle(16.8, 9.5, 1.1, fill=True)
+    elif name == "flower":
+        for turn in range(6):
+            angle = math.radians(turn * 60 - 90)
+            pen.circle(12 + 5.2 * math.cos(angle), 12 + 5.2 * math.sin(angle), 2.9)
+        pen.circle(12, 12, 2.3)
+    elif name == "keyboard":
+        pen.rect(2.5, 6, 21.5, 18.5, 2.5)
+        for row, y in enumerate((10, 13.5)):
+            for column in range(5):
+                pen.circle(6.2 + column * 2.9 + (row * 0.8), y, 0.5, fill=True)
+        pen.line((8.5, 16), (15.5, 16))
+    elif name == "report":
+        pen.rect(5, 3, 19, 21, 2.5)
+        pen.line((8.5, 8), (15.5, 8))
+        pen.line((8.5, 12), (15.5, 12))
+        pen.line((8.5, 16), (12.5, 16))
+    elif name == "fullscreen":
+        pen.line((4, 9), (4, 4), (9, 4))
+        pen.line((15, 4), (20, 4), (20, 9))
+        pen.line((20, 15), (20, 20), (15, 20))
+        pen.line((9, 20), (4, 20), (4, 15))
     elif name == "cup":
         pen.line((5.5, 4), (18.5, 4), (17, 20.5), (7, 20.5), (5.5, 4))
         pen.line((6.5, 10), (17.5, 10))
@@ -361,5 +413,6 @@ ALL_ICONS = (
     "user plus minus check chevron_left chevron_right close logout sparkle cup "
     "flame smile face1 face2 face3 face4 face5 eye eye_off trash edit download "
     "lock key steps clock info alert sun monitor scale dumbbell coffee circle "
-    "check_circle"
+    "check_circle copy search speaker eye_access palette flower keyboard report "
+    "fullscreen"
 ).split()

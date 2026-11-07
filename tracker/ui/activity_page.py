@@ -5,9 +5,18 @@ from typing import override
 
 import customtkinter as ctk
 
-from tracker import activity, daylog, profile, validators
+from tracker import activity, daylog, insights, profile, validators
 from tracker.ui import icons, theme, widgets
 from tracker.ui.page import Page
+
+QUICK_WORKOUTS = (
+    ("Brisk walking", 30),
+    ("Yoga", 20),
+    ("Dancing", 20),
+    ("Running", 20),
+    ("Strength training", 20),
+    ("Cycling", 30),
+)
 
 
 class ActivityPage(Page):
@@ -15,6 +24,10 @@ class ActivityPage(Page):
 
     title = "Activity"
     subtitle = "Every active minute counts. Vigorous minutes count double toward the weekly goal."
+    banner = [
+        {"kind": "dumbbell", "size": 104, "x": 0.66, "y": 0.5, "amp": 6, "hue": 0.87},
+    ]
+    banner_hue = 0.87
 
     @override
     def build(self) -> None:
@@ -102,26 +115,41 @@ class ActivityPage(Page):
         body = card.body
         form = ctk.CTkFrame(body, fg_color="transparent")
         form.grid(row=0, column=0, sticky="ew")
+        form.columnconfigure(0, weight=2)
         form.columnconfigure(1, weight=1)
         widgets.label(form, "Type", "label").grid(
             row=0, column=0, sticky="w", pady=(0, 6)
         )
         self.kind = widgets.option_menu(
-            form, list(activity.WORKOUTS), "Brisk walking", width=190
+            form, list(activity.WORKOUTS), "Brisk walking", width=96
         )
-        self.kind.grid(row=1, column=0, sticky="w", padx=(0, 12))
+        self.kind.grid(row=1, column=0, sticky="ew", padx=(0, 12))
         self.minutes = widgets.Field(form, "Minutes", "30", on_enter=self._add_workout)
         self.minutes.grid(row=0, column=1, rowspan=2, sticky="ew")
-        widgets.button(form, "Add", self._add_workout, icon="plus", width=96).grid(
-            row=1, column=2, padx=(12, 0), sticky="s"
+        # On its own row, so both boxes keep room even with extra-large text.
+        widgets.button(form, "Add", self._add_workout, icon="plus", width=84).grid(
+            row=2, column=1, sticky="e", pady=(10, 0)
         )
         if not workouts:
             widgets.label(
                 body,
-                "No workouts logged for this day. A brisk 30-minute walk counts.",
+                "No workouts logged for this day. Tap one to add it:",
                 "callout",
                 "text_muted",
-            ).grid(row=1, column=0, sticky="w", pady=(16, 0))
+                wraplength=520,
+            ).grid(row=1, column=0, sticky="w", pady=(16, 6))
+            quick = widgets.ResponsiveGrid(
+                body, min_column=170, max_columns=3, gap=6, nested=True
+            )
+            quick.grid(row=2, column=0, sticky="ew")
+            for kind, length in QUICK_WORKOUTS:
+                quick.add(
+                    widgets.small_button(
+                        quick,
+                        f"{kind}, {length} min",
+                        lambda k=kind, m=length: self._log_workout(k, m),
+                    )
+                )
         for row, workout in enumerate(workouts, start=1):
             level = activity.intensity(workout["met"])
             line = ctk.CTkFrame(
@@ -138,6 +166,11 @@ class ActivityPage(Page):
             widgets.badge(
                 line, level.title(), "good" if level == "vigorous" else "info"
             ).grid(row=0, column=2, padx=8)
+            if level == "light":
+                widgets.Tooltip(
+                    line,
+                    "Light activity is good for you, but WHO's minutes count moderate and vigorous activity.",
+                )
             if self.weight:
                 widgets.label(
                     line,
@@ -158,7 +191,8 @@ class ActivityPage(Page):
             "Calories are estimates from typical MET values.",
             "footnote",
             "text_muted",
-        ).grid(row=len(workouts) + 2, column=0, sticky="w", pady=(10, 0))
+            wraplength=520,
+        ).grid(row=len(workouts) + 3, column=0, sticky="w", pady=(10, 0))
         return card
 
     def _add_workout(self) -> None:
@@ -169,7 +203,9 @@ class ActivityPage(Page):
         except ValueError as error:
             self.minutes.show_error(str(error))
             return
-        kind = self.kind.get()
+        self._log_workout(self.kind.get(), minutes)
+
+    def _log_workout(self, kind: str, minutes: int) -> None:
         log = daylog.get_day(self.data, self.day)
         log.setdefault("workouts", []).append(
             {"type": kind, "minutes": minutes, "met": activity.WORKOUTS[kind]}
@@ -188,13 +224,14 @@ class ActivityPage(Page):
 
     def _week_card(self, master) -> widgets.Card:
         weekly = activity.weekly_moderate_minutes(self.data["days"], self.day)
-        goal = activity.WHO_WEEKLY_MINUTES
-        card = widgets.Card(
-            master,
-            "Last 7 days",
-            "WHO recommends at least 150 moderate minutes a week",
-            icon="calendar",
+        age = insights.age_for(self.data, self.today)
+        goal = activity.weekly_goal_minutes(age)
+        advice = (
+            "WHO recommends an average of 60 active minutes a day at your age"
+            if goal != activity.WHO_WEEKLY_MINUTES
+            else "WHO recommends at least 150 moderate minutes a week"
         )
+        card = widgets.Card(master, "Last 7 days", advice, icon="calendar")
         body = card.body
         body.columnconfigure(1, weight=1)
         number = widgets.stat(
@@ -215,6 +252,14 @@ class ActivityPage(Page):
         widgets.label(bar_box, message, "callout", "text_muted").grid(
             row=1, column=0, sticky="w", pady=(6, 0)
         )
+        strength = activity.strength_days(self.data["days"], self.day)
+        widgets.label(
+            bar_box,
+            f"Muscle-strengthening days: {strength} of the {activity.WHO_STRENGTH_DAYS} a week WHO suggests.",
+            "footnote",
+            "text_muted",
+            wraplength=520,
+        ).grid(row=2, column=0, sticky="w", pady=(2, 0))
         days = [self.day - timedelta(days=offset) for offset in range(6, -1, -1)]
         values = [
             activity.moderate_minutes(daylog.peek_day(self.data, d).get("workouts", []))
@@ -230,5 +275,7 @@ class ActivityPage(Page):
             height=170,
             highlight=6,
         )
+        chart.unit = " min"
+        chart.full_labels = [f"{d:%a, %b} {d.day}" for d in days]
         chart.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(16, 0))
         return card

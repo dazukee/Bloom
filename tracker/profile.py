@@ -2,9 +2,12 @@
 
 Pure logic: no customtkinter, no file access.
 
-Energy needs use the Mifflin-St Jeor equation for women,
+Energy needs for adults use the Mifflin-St Jeor equation for women,
     BMR = 10 x weight_kg + 6.25 x height_cm - 5 x age - 161,
-multiplied by the usual activity factor (1.2 to 1.9).
+multiplied by the usual activity factor (1.2 to 1.9). That equation was made for
+adults, so girls aged 9-18 use the Institute of Medicine (2005) Estimated Energy
+Requirement instead, which includes the energy used for growing:
+    EER = 135.3 - 30.8 x age + PA x (10 x weight_kg + 934 x height_m) + 25.
 """
 
 from datetime import date
@@ -30,6 +33,16 @@ FOCUS_OPTIONS = {
 # Reasons that cannot both be true: picking one unticks the other.
 OPPOSITE_FOCUS = {"conceive": "avoid", "avoid": "conceive"}
 
+# Physical activity coefficient for each activity level in the EER equation.
+EER_ACTIVITY = {
+    "sedentary": 1.0,
+    "light": 1.16,
+    "moderate": 1.31,
+    "active": 1.56,
+    "athlete": 1.56,
+}
+EER_MAX_AGE = 18
+
 MIN_CYCLE_LENGTH = 21
 MAX_CYCLE_LENGTH = 45
 MIN_PERIOD_LENGTH = 2
@@ -47,6 +60,18 @@ def daily_calorie_target(
     """Return maintenance calories a day, rounded to the nearest 10."""
     factor = ACTIVITY_LEVELS[activity_level][2]
     calories = bmr_mifflin_st_jeor(weight_kg, height_cm, age_years) * factor
+    return int(round(calories / 10) * 10)
+
+
+def estimated_energy_requirement_girl(
+    weight_kg: float, height_cm: float, age_years: int, activity_level: str
+) -> int:
+    """Return calories a day for a girl aged 9-18, rounded to the nearest 10."""
+    activity = EER_ACTIVITY[activity_level]
+    height_m = height_cm / 100
+    calories = (
+        135.3 - 30.8 * age_years + activity * (10 * weight_kg + 934 * height_m) + 25
+    )
     return int(round(calories / 10) * 10)
 
 
@@ -86,6 +111,10 @@ def calorie_target(data: dict, today: date) -> int | None:
     if weight is None or profile.get("height_cm") is None or age is None:
         return None
     level = profile.get("activity_level", "light")
+    if age <= EER_MAX_AGE:
+        return estimated_energy_requirement_girl(
+            weight, profile["height_cm"], age, level
+        )
     return daily_calorie_target(weight, profile["height_cm"], age, level)
 
 

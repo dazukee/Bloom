@@ -43,6 +43,45 @@ def _arc(draw, cx, cy, radius, start, end, colour, width) -> None:
         draw.ellipse((x - cap, y - cap, x + cap, y + cap), fill=colour)
 
 
+def _smooth_path(points: list[tuple[float, float]], steps: int = 8) -> list:
+    """Return a Catmull-Rom curve through the points, so charts read as trends."""
+    path = []
+    last = len(points) - 1
+    for i in range(last):
+        p0 = points[max(i - 1, 0)]
+        p1 = points[i]
+        p2 = points[i + 1]
+        p3 = points[min(i + 2, last)]
+        for step in range(steps):
+            t = step / steps
+            t2, t3 = t * t, t * t * t
+            x = 0.5 * (2 * p1[0] + (p2[0] - p0[0]) * t
+                       + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2
+                       + (3 * p1[0] - p0[0] - 3 * p2[0] + p3[0]) * t3)  # fmt: skip
+            y = 0.5 * (2 * p1[1] + (p2[1] - p0[1]) * t
+                       + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2
+                       + (3 * p1[1] - p0[1] - 3 * p2[1] + p3[1]) * t3)  # fmt: skip
+            path.append((x, y))
+    path.append(points[-1])
+    return path
+
+
+def _fade_area(image, polygon, top: float, bottom: float, colour: str) -> None:
+    """Fill a polygon with a colour that fades out towards the bottom."""
+    mask = Image.new("L", image.size, 0)
+    ImageDraw.Draw(mask).polygon(polygon, fill=255)
+    height = max(int(bottom - top), 1)
+    fade = Image.linear_gradient("L").resize((image.width, height)).point(
+        lambda level: int((255 - level) * 0.34)
+    )  # fmt: skip
+    strength = Image.new("L", image.size, 0)
+    strength.paste(fade, (0, int(top)))
+    mask = Image.composite(strength, Image.new("L", image.size, 0), mask)
+    layer = Image.new("RGBA", image.size, rgb(colour))
+    layer.putalpha(mask)
+    image.alpha_composite(layer)
+
+
 def rings(
     size: int,
     specs: list[tuple[float, str, str]],
@@ -96,6 +135,8 @@ def gauge(
     cx = width * SS / 2
     cy = height * SS - 14 * SS
     radius = min(cx - 10 * SS, cy - 4 * SS)
+    if radius < 12 * SS:  # too small to draw; happens only while a layout settles
+        return _finish(image, width, height)
     thick = int(radius * 0.2)
     box = (cx - radius, cy - radius, cx + radius, cy + radius)
     draw.arc(box, 180, 360, fill=rgb(track), width=thick)
@@ -184,17 +225,19 @@ def line_chart(
         segments.append(segment)
 
     for seg in segments:
+        path = _smooth_path(seg) if len(seg) > 2 else seg
         if area and len(seg) > 1:
-            polygon = seg + [(seg[-1][0], top + plot_h), (seg[0][0], top + plot_h)]
-            draw.polygon(polygon, fill=rgb(colour, 38))
+            polygon = path + [(seg[-1][0], top + plot_h), (seg[0][0], top + plot_h)]
+            _fade_area(image, polygon, top, top + plot_h, colour)
         if len(seg) > 1:
-            draw.line(seg, fill=rgb(colour), width=3 * SS, joint="curve")
+            draw.line(path, fill=rgb(colour), width=3 * SS, joint="curve")
+    dot = max(2.5, min(4.5, plot_w / SS / max(len(values), 1) / 3.2))
     for point in positions:
         if point is not None:
             x, y = point
-            r = 4.5 * SS
+            r = dot * SS
             draw.ellipse((x - r, y - r, x + r, y + r), fill=rgb(colour))
-            r2 = 2 * SS
+            r2 = r * 0.45
             draw.ellipse((x - r2, y - r2, x + r2, y + r2), fill=(255, 255, 255, 255))
 
     scaled = [None if p is None else (p[0] / SS, p[1] / SS) for p in positions]
@@ -243,7 +286,15 @@ def bar_chart(
         tops.append((cx / SS, (top + plot_h - bar_h) / SS))
     if goal is not None and maximum:
         y = top + plot_h * (1 - min(goal / maximum, 1))
-        draw.line((left, y, left + plot_w, y), fill=rgb(goal_colour), width=2 * SS)
+        dash = 7 * SS
+        x = left
+        while x < left + plot_w:
+            draw.line(
+                (x, y, min(x + dash, left + plot_w), y),
+                fill=rgb(goal_colour),
+                width=2 * SS,
+            )
+            x += dash * 1.8
     return _finish(image, width, height), tops
 
 
@@ -336,3 +387,207 @@ def water_glass(
         [top_l, bot_l, bot_r, top_r], fill=rgb(glass), width=4 * SS, joint="curve"
     )
     return _finish(image, width, height)
+
+
+def flower(
+    size: int,
+    petals: list[str | None],
+    faint_colour: str,
+    centre_colour: str,
+    t: float = 1.0,
+    open_amount: float = 1.0,
+) -> Image.Image:
+    """Draw a flower with one petal per habit: a colour if earned, faint if not.
+
+    Args:
+        size: Width and height in pixels.
+        petals: A colour hex (earned) or None (not yet) for each petal.
+        faint_colour: The colour of petals not earned.
+        centre_colour: The colour of the middle.
+        t: Growth, 0 to 1.
+        open_amount: How far the petals spread, 0 to 1.
+    """
+    image, draw = _canvas(size, size)
+    middle = size * SS / 2
+    reach = size * SS * 0.47 * t
+    half_width = size * SS * 0.17 * t * (0.6 + 0.4 * open_amount)
+    total = len(petals)
+    # Faint petals go underneath, so earned ones are never cut by them.
+    order = sorted(range(total), key=lambda i: petals[i] is not None)
+    for number in order:
+        angle = math.radians(number * 360 / total - 90)
+        colour = petals[number] or faint_colour
+        edge = []
+        for step in range(25):  # one side of a pointed oval, along the petal
+            along = step / 24
+            edge.append((reach * along, half_width * math.sin(math.pi * along) ** 0.7))
+        outline = edge + [(x, -y) for x, y in reversed(edge)]
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+        points = [
+            (middle + x * cos_a - y * sin_a, middle + x * sin_a + y * cos_a)
+            for x, y in outline
+        ]
+        draw.polygon(points, fill=rgb(colour))
+        if petals[number]:  # a lighter vein down the middle gives the petal depth
+            vein = [
+                (middle + reach * 0.22 * cos_a, middle + reach * 0.22 * sin_a),
+                (middle + reach * 0.8 * cos_a, middle + reach * 0.8 * sin_a),
+            ]
+            draw.line(vein, fill=(255, 255, 255, 70), width=max(1, size * SS // 70))
+    dot = size * SS * 0.13 * t
+    box = (middle - dot, middle - dot, middle + dot, middle + dot)
+    draw.ellipse(box, fill=rgb(centre_colour))
+    return _finish(image, size, size)
+
+
+def cycle_wheel(
+    size: int,
+    segments: list[tuple[float, float, str]],
+    track: str,
+    marker: float | None,
+    marker_colour: str,
+    ring_colour: str,
+    thickness: int,
+    t: float = 1.0,
+) -> Image.Image:
+    """Draw the whole cycle as a ring of coloured phases with a dot on today.
+
+    Args:
+        size: Width and height in pixels.
+        segments: (start 0-1, end 0-1, colour hex) around the ring.
+        track: The colour behind the segments.
+        marker: Today's position 0-1, or None when unknown.
+        marker_colour: The dot's colour.
+        ring_colour: The ring around the dot.
+        thickness: Ring width in pixels.
+        t: Animation progress 0-1; the phases sweep in.
+    """
+    image, draw = _canvas(size, size)
+    centre = size * SS / 2
+    radius = centre - 7 * SS
+    width = thickness * SS
+    box = (centre - radius, centre - radius, centre + radius, centre + radius)
+    draw.ellipse(box, outline=rgb(track), width=width)
+    gap = 1.6  # degrees of space between phases
+    for start, end, colour in segments:
+        a0 = start * 360 * t
+        a1 = max(a0, end * 360 * t - gap)
+        if a1 > a0:
+            draw.arc(box, a0 - 90, a1 - 90, fill=rgb(colour), width=width)
+    if marker is not None:
+        angle = math.radians(marker * 360 * t - 90)
+        middle = radius - width / 2
+        x = centre + middle * math.cos(angle)
+        y = centre + middle * math.sin(angle)
+        outer = (thickness / 2 + 5) * SS
+        inner = (thickness / 2 + 1.5) * SS
+        draw.ellipse(
+            (x - outer, y - outer, x + outer, y + outer), fill=rgb(ring_colour)
+        )
+        draw.ellipse(
+            (x - inner, y - inner, x + inner, y + inner), fill=rgb(marker_colour)
+        )
+    return _finish(image, size, size)
+
+
+def garden_scene(
+    width: int,
+    height: int,
+    sky_top: str,
+    sky_bottom: str,
+    hill_colours: list[str],
+    horizons: list[float],
+    night: bool = False,
+) -> Image.Image:
+    """Draw the garden's backdrop: a soft sky and rolling hills, one per week.
+
+    Args:
+        width: Width in pixels.
+        height: Height in pixels.
+        sky_top: The colour at the top of the sky.
+        sky_bottom: The colour at the horizon.
+        hill_colours: One colour per hill, furthest first.
+        horizons: How far down each hill begins, as a share of the height.
+        night: True for stars and a moon, False for a sun and clouds.
+    """
+    top, bottom = rgb(sky_top), rgb(sky_bottom)
+    image = Image.new("RGBA", (width, height), top)
+    sky = Image.new("RGBA", (1, height))
+    for y in range(height):
+        share = y / max(height - 1, 1)
+        sky.putpixel(
+            (0, y),
+            tuple(round(a + (b - a) * share) for a, b in zip(top, bottom, strict=True)),
+        )
+    image = sky.resize((width, height))
+    big = Image.new("RGBA", (width * SS, height * SS), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(big)
+    sky_height = horizons[0] * height * SS
+    orb_x, orb_y, orb = width * SS * 0.88, sky_height * 0.42, sky_height * 0.26
+    if night:
+        for number in range(46):
+            x = (number * 0.381966 + 0.03) % 1 * width * SS
+            y = (number * 0.754877 + 0.11) % 1 * sky_height
+            r = (0.6 + number % 3 * 0.45) * SS
+            draw.ellipse((x - r, y - r, x + r, y + r), fill=(255, 255, 255, 190))
+        draw.ellipse(
+            (orb_x - orb, orb_y - orb, orb_x + orb, orb_y + orb),
+            fill=(236, 236, 255, 255),
+        )
+        bite = orb * 0.82
+        draw.ellipse(
+            (orb_x + orb * 0.3 - bite, orb_y - orb * 0.2 - bite,
+             orb_x + orb * 0.3 + bite, orb_y - orb * 0.2 + bite),
+            fill=rgb(sky_top),
+        )  # fmt: skip
+    else:
+        for scale, alpha in ((1.5, 60), (1.22, 90), (1.0, 255)):
+            r = orb * scale
+            draw.ellipse(
+                (orb_x - r, orb_y - r, orb_x + r, orb_y + r), fill=(255, 205, 96, alpha)
+            )
+        for cx, cy, size in ((0.16, 0.38, 1.0), (0.46, 0.2, 0.74), (0.67, 0.52, 0.6)):
+            x, y, r = width * SS * cx, sky_height * cy, sky_height * 0.13 * size
+            for dx, dy, part in ((-1.3, 0.2, 0.8), (0, 0, 1.15), (1.3, 0.25, 0.75)):
+                draw.ellipse(
+                    (x + dx * r - part * r, y + dy * r - part * r,
+                     x + dx * r + part * r, y + dy * r + part * r),
+                    fill=(255, 255, 255, 215),
+                )  # fmt: skip
+    for number, (colour, horizon) in enumerate(
+        zip(hill_colours, horizons, strict=True)
+    ):
+        points = [(0, height * SS)]
+        for x in range(0, width + 8, 8):
+            wave = math.sin(x / max(width, 1) * math.pi * 2.2 + number * 1.7)
+            y = (horizon * height + wave * height * 0.018) * SS
+            points.append((x * SS, y))
+        points.append((width * SS, height * SS))
+        draw.polygon(points, fill=rgb(colour))
+    image.alpha_composite(big.resize((width, height), Image.LANCZOS))
+    return image
+
+
+def butterfly(size: int, colour: str, flap: float = 1.0) -> Image.Image:
+    """Draw a small butterfly; flap (0-1) is how open its wings are."""
+    image, draw = _canvas(size, size)
+    middle = size * SS / 2
+    wide = size * SS * 0.44 * flap
+    fill = rgb(colour)
+    for side in (-1, 1):
+        upper = (middle + side * wide, middle - size * SS * 0.2)
+        lower = (middle + side * wide * 0.72, middle + size * SS * 0.24)
+        for (x, y), r in ((upper, size * SS * 0.2), (lower, size * SS * 0.14)):
+            r_x = r * max(flap, 0.5)
+            draw.ellipse((x - r_x, y - r, x + r_x, y + r), fill=fill)
+    body = size * SS * 0.05
+    draw.ellipse(
+        (
+            middle - body,
+            middle - size * SS * 0.3,
+            middle + body,
+            middle + size * SS * 0.3,
+        ),
+        fill=(40, 30, 50, 255),
+    )
+    return _finish(image, size, size)

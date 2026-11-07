@@ -9,6 +9,7 @@ from datetime import date, timedelta
 from tracker.cycle import (
     DEFAULT_PERIOD_LENGTH,
     CyclePrediction,
+    ovulation_of_cycle,
     period_end,
     projected_cycle,
 )
@@ -65,14 +66,20 @@ def day_status(
     if prediction is None or day < prediction.last_start:
         return STATUS_NONE
 
-    k, shift = projected_cycle(prediction, day)
-    cycle_start = prediction.last_start + shift
-    predicted_end = cycle_start + timedelta(days=prediction.period_length - 1)
-    if k >= 1 and cycle_start <= day <= predicted_end:
+    k, first_day = projected_cycle(prediction, day)
+    predicted_end = first_day + timedelta(days=prediction.period_length - 1)
+    if k >= 1 and day <= predicted_end:
         return STATUS_PREDICTED
-    if day == prediction.ovulation + shift:
+    if day == ovulation_of_cycle(prediction, k, first_day):
         return STATUS_OVULATION
-    if prediction.fertile_start + shift <= day <= prediction.fertile_end + shift:
+    if k == 0:
+        window = prediction.fertile_start, prediction.fertile_end
+    else:
+        window = (
+            first_day + timedelta(days=prediction.fertile_from),
+            first_day + timedelta(days=prediction.fertile_to),
+        )
+    if window[0] <= day <= window[1]:
         return STATUS_FERTILE
     return STATUS_NONE
 

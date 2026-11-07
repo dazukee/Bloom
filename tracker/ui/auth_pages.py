@@ -12,23 +12,24 @@ from typing import override
 import customtkinter as ctk
 
 from tracker import auth
-from tracker.ui import anim, icons, render3d, theme, widgets
+from tracker.ui import icons, palette, sfx, theme, widgets
 
 HERO_OBJECTS = [
-    {"kind": "sphere", "size": 170, "x": 0.32, "y": 0.27, "amp": 10, "phase": 0.0},
-    {"kind": "torus", "size": 150, "x": 0.72, "y": 0.45, "amp": 8, "phase": 1.6},
-    {"kind": "cube", "size": 112, "x": 0.30, "y": 0.60, "amp": 9, "phase": 3.1},
     {
-        "kind": "sphere",
-        "size": 54,
-        "x": 0.80,
-        "y": 0.18,
-        "amp": 6,
-        "phase": 2.2,
-        "base": render3d.ORCHID,
-        "glow": render3d.PEARL,
+        "kind": "flower",
+        "size": 230,
+        "x": 0.48,
+        "y": 0.36,
+        "amp": 10,
+        "base": (168, 85, 247),
+        "glow": (253, 224, 255),
     },
-]
+    {"kind": "heart", "size": 74, "x": 0.15, "y": 0.2, "amp": 8, "phase": 1.6, "hue": 0.95},
+    {"kind": "drop", "size": 62, "x": 0.86, "y": 0.16, "amp": 7, "phase": 3.1, "hue": 0.93},
+    {"kind": "moon", "size": 62, "x": 0.84, "y": 0.6, "amp": 6, "phase": 2.2, "hue": 0.13},
+    {"kind": "sphere", "size": 40, "x": 0.14, "y": 0.58, "amp": 6, "phase": 0.7, "hue": 0.55},
+]  # fmt: skip
+STRENGTHS = (("Weak", "danger"), ("Fair", "warning"), ("Good", "fertile"), ("Strong", "success"))  # fmt: skip
 HERO_TEXTS = (
     (theme.APP_NAME, "large_title", "on_primary", 0.09, 0.80, "w"),
     ("Know your body, one day at a time.", "title3", "on_primary", 0.09, 0.865, "w"),
@@ -55,11 +56,26 @@ class AuthScreen(ctk.CTkFrame):
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=5)
         self.columnconfigure(1, weight=6)
-        self.hero = widgets.Hero3D(self, HERO_OBJECTS, height=600, texts=HERO_TEXTS)
+        self.hero = widgets.Hero3D(
+            self, HERO_OBJECTS, height=600, texts=HERO_TEXTS, stars=26, text_width=0.84
+        )
         self.hero.grid(row=0, column=0, sticky="nsew")
         self.side = ctk.CTkFrame(self, fg_color=theme.pair("bg"), corner_radius=0)
         self.side.grid(row=0, column=1, sticky="nsew")
-        self.card = ctk.CTkFrame(self.side, fg_color="transparent")
+        self.side.rowconfigure(0, weight=1)
+        self.side.columnconfigure(0, weight=1)
+        # The form scrolls if a short window or large text cannot fit it.
+        self.scroller = ctk.CTkScrollableFrame(
+            self.side,
+            fg_color=theme.pair("bg"),
+            corner_radius=0,
+            scrollbar_button_color=theme.pair("border"),
+            scrollbar_button_hover_color=theme.pair("text_muted"),
+        )
+        self.scroller.grid(row=0, column=0, sticky="nsew")
+        self.scroller.columnconfigure(0, weight=1)
+        widgets.fast_scroll(self.scroller)
+        self.card = ctk.CTkFrame(self.scroller, fg_color="transparent")
         self.card.columnconfigure(0, weight=1)
         # An empty 380-wide row fixes the form's width; its height follows the content.
         ctk.CTkFrame(self.card, width=380, height=1, fg_color="transparent").grid(
@@ -72,14 +88,38 @@ class AuthScreen(ctk.CTkFrame):
             self.card, self.subheading, "body", "text_muted", wraplength=370
         ).grid(row=1, column=0, sticky="w", pady=(4, 22))
         self.build(self.card, 2)
-        self.card.place(relx=0.5, rely=0.5, anchor="center", y=30)
-        anim.animate(
-            self.card,
-            theme.PAGE_IN,
-            lambda t: self.card.place_configure(y=30 * (1 - t)),
-            key="auth-card",
+        self.card.grid(row=0, column=0, pady=theme.PAGE_PAD)
+        self.scroller.bind("<Configure>", self._centre_form, add="+")
+        access = widgets.icon_button(
+            self.side,
+            "eye_access",
+            self._open_access,
+            size=36,
+            kind="ghost",
+            tooltip="Accessibility: larger text, high contrast",
         )
+        access.place(relx=1.0, x=-14, y=14, anchor="ne")
         self.adapt(app.compact)
+        self.after(20, self._centre_form)
+
+    def _centre_form(self, _event=None) -> None:
+        """Keep the form vertically centred whenever it fits."""
+        try:
+            room = self.scroller._parent_canvas.winfo_height()
+            height = self.card.winfo_reqheight()
+            scale = widgets.scaling(self)
+            top = max(theme.PAGE_PAD, (room - height) / 2 / scale)
+            self.card.grid_configure(pady=(top, theme.PAGE_PAD))
+        except widgets.tk.TclError:
+            pass
+
+    def _open_access(self) -> None:
+        palette.show_login_access(self.app, self._look_changed)
+
+    def _look_changed(self) -> None:
+        self.app.save_users()
+        self.app.apply_login_look()
+        self.app.restart_screen(self)
 
     def build(self, card, row: int) -> None:
         """Add the form to `card`, starting at grid row `row`."""
@@ -244,6 +284,10 @@ class RegisterScreen(AuthScreen):
             )
             rule.grid(row=index, column=0, sticky="w")
             self.rule_labels.append(rule)
+        self.strength = widgets.progress_bar(rules, 0, "danger", 6)
+        self.strength.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        self.strength_text = widgets.label(rules, "", "footnote", "text_muted")
+        self.strength_text.grid(row=4, column=0, sticky="w")
         for field in (self.password, self.confirm):
             field.entry.bind("<KeyRelease>", lambda _e: self._update_rules(), add="+")
         self.message = self.error_label(card, row + 4)
@@ -266,6 +310,11 @@ class RegisterScreen(AuthScreen):
                 text_color=theme.pair("success" if passed else "text_muted"),
                 image=icons.icon("check", 14, "success" if passed else "border"),
             )
+        score = auth.password_strength(password)
+        name, token = STRENGTHS[score]
+        self.strength.set((score + 1) / len(STRENGTHS) if password else 0)
+        self.strength.configure(progress_color=theme.pair(token))
+        self.strength_text.configure(text=f"Strength: {name}" if password else "")
 
     def submit(self) -> None:
         """Check the rules field by field, then create the account."""
@@ -414,12 +463,12 @@ class CodeScreen(AuthScreen):
         )
         box.grid(row=row, column=0, sticky="ew", pady=(0, 12))
         widgets.button(
-            card, "Copy Code", self._copy, kind="secondary", icon="download"
+            card, "Copy Code", self._copy, kind="secondary", icon="copy"
         ).grid(row=row + 1, column=0, sticky="w", pady=(0, 18))
         self.saved = ctk.CTkCheckBox(
             card,
             text="I saved my recovery code",
-            command=self._toggle,
+            command=sfx.with_sound(self._toggle, "toggle"),
             font=theme.font("body"),
             text_color=theme.pair("text"),
             fg_color=theme.pair("primary"),
@@ -428,6 +477,7 @@ class CodeScreen(AuthScreen):
             corner_radius=6,
         )
         self.saved.grid(row=row + 2, column=0, sticky="w", pady=(0, 16))
+        widgets.keyboard(self.saved, self.saved.toggle, "I saved my recovery code")
         self.continue_button = widgets.button(
             card,
             "Continue",

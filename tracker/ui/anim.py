@@ -53,6 +53,19 @@ def lerp_color(start: str, end: str, t: float) -> str:
     return "#{:02x}{:02x}{:02x}".format(*mixed)
 
 
+def busy() -> bool:
+    """Return True while an animation is playing (floating loops don't count)."""
+    for key, (widget, _job) in list(_running.items()):
+        try:
+            alive = widget.winfo_exists()
+        except tk.TclError:
+            alive = False
+        if not alive:
+            # Its widget was closed mid-animation, so its next frame never runs.
+            _running.pop(key, None)
+    return bool(_running)
+
+
 def cancel(key: str) -> None:
     """Stop the animation running under `key`, if any."""
     entry = _running.pop(key, None)

@@ -25,14 +25,16 @@ def test_t09_regular_cycles():
     assert p.average_length == 28
     assert p.next_start == date(2026, 3, 26)
     assert p.ovulation == date(2026, 3, 12)
-    assert (p.fertile_start, p.fertile_end) == (date(2026, 3, 7), date(2026, 3, 14))
+    # Two known cycles: the calendar window (Mar 7-14) plus a 1-day margin each side.
+    assert (p.fertile_start, p.fertile_end) == (date(2026, 3, 6), date(2026, 3, 15))
     assert p.uses_default_length is False
 
 
 def test_t10_one_period_uses_default():
     p = cycle.predict_cycle(periods_from(date(2026, 2, 26)))
     assert p.next_start == date(2026, 3, 26)
-    assert (p.fertile_start, p.fertile_end) == (date(2026, 3, 7), date(2026, 3, 14))
+    # No known cycle: a 2-day margin each side (cycle days 8 to 19).
+    assert (p.fertile_start, p.fertile_end) == (date(2026, 3, 5), date(2026, 3, 16))
     assert p.uses_default_length is True
     assert p.confidence == "low"
 
@@ -56,7 +58,7 @@ def test_t13_irregular_cycles():
     assert p.average_length == 30
     assert p.next_start == date(2026, 5, 3)
     assert p.ovulation == date(2026, 4, 19)
-    assert (p.fertile_start, p.fertile_end) == (date(2026, 4, 9), date(2026, 4, 26))
+    assert (p.fertile_start, p.fertile_end) == (date(2026, 4, 8), date(2026, 4, 27))
     assert cycle.lengths_outside_typical_range([25, 35, 30]) == []
 
 
@@ -139,7 +141,7 @@ def test_cycle_day_and_stats():
 
 def test_hormone_pattern_peaks():
     before = cycle.hormone_levels(5, 28)
-    at_ovulation = cycle.hormone_levels(13.5, 28)
+    at_ovulation = cycle.hormone_levels(14.5, 28)
     luteal = cycle.hormone_levels(21, 28)
     assert at_ovulation["LH"] > 0.9 > before["LH"]
     assert luteal["Progesterone"] > before["Progesterone"]

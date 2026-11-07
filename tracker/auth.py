@@ -57,8 +57,8 @@ def check_username_rules(username: str) -> None:
     if not USERNAME_MIN_LENGTH <= len(username) <= USERNAME_MAX_LENGTH:
         raise ValueError("Username must be 3 to 20 characters.")
     for character in username:
-        is_plain_letter = character.isascii() and character.isalpha()
-        if not (is_plain_letter or character.isdigit() or character == "_"):
+        is_plain = character.isascii() and character.isalnum()
+        if not (is_plain or character == "_"):
             raise ValueError("Username can only use letters, numbers and _.")
 
 
@@ -83,6 +83,29 @@ def check_password_rules(password: str, confirm: str) -> None:
         raise ValueError("Password needs at least one letter and one number.")
     if password != confirm:
         raise ValueError("Passwords do not match.")
+
+
+def password_strength(password: str) -> int:
+    """Return a rough strength, 0 (weak) to 3 (strong), to encourage longer passwords.
+
+    Length matters most (OWASP); a mix of character kinds helps a little. The
+    rules for accepting a password are in check_password_rules.
+    """
+    kinds = sum(
+        (
+            any(c.islower() for c in password),
+            any(c.isupper() for c in password),
+            any(c.isdigit() for c in password),
+            any(not c.isalnum() for c in password),
+        )
+    )
+    if len(password) < PASSWORD_MIN_LENGTH or kinds < 2:
+        return 0
+    if len(password) >= 16 or (len(password) >= 12 and kinds >= 3):
+        return 3
+    if len(password) >= 12 or kinds >= 3:
+        return 2
+    return 1
 
 
 def find_user(users: dict, username: str) -> dict | None:
@@ -237,6 +260,7 @@ def reset_password_with_code(
     check_password_rules(new_password, confirm)
     user = find_user(users, username)
     if user is None:
+        hash_secret(code, b"timing-equaliser", PBKDF2_ITERATIONS)
         raise AuthError(RECOVERY_FAILED)
     _check_not_locked(user, now)
     if not secret_matches(normalize_recovery_code(code), user["recovery"]):

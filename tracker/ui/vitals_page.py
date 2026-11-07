@@ -4,7 +4,7 @@ from typing import override
 
 import customtkinter as ctk
 
-from tracker import daylog, validators, vitals
+from tracker import daylog, insights, validators, vitals
 from tracker.ui import widgets
 from tracker.ui.page import Page
 
@@ -16,6 +16,10 @@ class VitalsPage(Page):
 
     title = "Vitals & Sleep"
     subtitle = "Measure while seated and rested. Categories are general guidance, not a diagnosis."
+    banner = [
+        {"kind": "heart", "size": 88, "x": 0.66, "y": 0.5, "amp": 6, "hue": 0.97},
+    ]
+    banner_hue = 0.97
 
     @override
     def build(self) -> None:
@@ -25,6 +29,7 @@ class VitalsPage(Page):
             row=0, column=0
         )
         self.log = daylog.peek_day(self.data, self.day)
+        self.age = insights.age_for(self.data, self.today)
         grid = widgets.ResponsiveGrid(self.body, min_column=260, max_columns=3)
         grid.grid(row=0, column=0, sticky="ew")
         grid.add(lambda: self._sleep_card(grid))
@@ -61,7 +66,11 @@ class VitalsPage(Page):
             row=3, column=0, sticky="ew", pady=(14, 0)
         )
         if "sleep_h" in self.log:
-            text, tone = vitals.sleep_note(self.log["sleep_h"], goal)
+            widgets.button(
+                body, "Clear", self._clear_sleep, kind="ghost", height=30
+            ).grid(row=6, column=0, sticky="e", pady=(4, 0))
+        if "sleep_h" in self.log:
+            text, tone = vitals.sleep_note(self.log["sleep_h"], goal, self.age)
             widgets.badge(body, text, tone).grid(
                 row=4, column=0, sticky="w", pady=(10, 0)
             )
@@ -76,6 +85,12 @@ class VitalsPage(Page):
         daylog.set_value(self.data, self.day, "sleep_h", self.sleep.get())
         daylog.set_value(self.data, self.day, "sleep_quality", self.quality.value)
         self.save("Sleep saved")
+        self.refresh()
+
+    def _clear_sleep(self) -> None:
+        daylog.set_value(self.data, self.day, "sleep_h", None)
+        daylog.set_value(self.data, self.day, "sleep_quality", None)
+        self.save("Sleep cleared")
         self.refresh()
 
     # Blood pressure ---------------------------------------------------------------------
@@ -112,9 +127,40 @@ class VitalsPage(Page):
                 widgets.note(body, vitals.SEVERE_BP_ADVICE, "danger", 250).grid(
                     row=3, column=0, sticky="ew", pady=(10, 0)
                 )
+            elif category == "Low":
+                widgets.note(body, vitals.LOW_BP_ADVICE, "info", 250).grid(
+                    row=3, column=0, sticky="ew", pady=(10, 0)
+                )
+        average = vitals.bp_average(self.data["days"], self.day)
+        if average is not None and average[2] >= 2:
+            systolic, diastolic, count = average
+            category, _ = vitals.bp_category(systolic, diastolic)
+            widgets.label(
+                body,
+                f"Your average: {systolic}/{diastolic} ({category}) from {count} readings in 14 days. "
+                "The average says more than any one reading.",
+                "footnote",
+                "text_muted",
+                wraplength=250,
+            ).grid(row=4, column=0, sticky="w", pady=(8, 0))
+        if self.age is not None and self.age < vitals.ADULT_BP_FROM_AGE:
+            widgets.note(
+                body,
+                "Under 13, doctors judge blood pressure by age and height, so these adult categories are only a rough guide.",
+                "info",
+                250,
+            ).grid(row=5, column=0, sticky="ew", pady=(8, 0))
         return card
 
     def _save_pressure(self) -> None:
+        if not self.systolic.get().strip() and not self.diastolic.get().strip():
+            # Both boxes emptied: that removes the reading.
+            had_reading = "bp_sys" in self.log
+            daylog.set_value(self.data, self.day, "bp_sys", None)
+            daylog.set_value(self.data, self.day, "bp_dia", None)
+            self.save("Blood pressure removed" if had_reading else None)
+            self.refresh()
+            return
         low, high, unit = vitals.LIMITS["bp_sys"]
         try:
             systolic = validators.parse_number(
@@ -233,7 +279,7 @@ class VitalsPage(Page):
             icon="moon",
         )
         labels = [d.strftime("%a")[0] for d in days]
-        widgets.BarChart(
+        chart = widgets.BarChart(
             card.body,
             values,
             labels,
@@ -243,7 +289,10 @@ class VitalsPage(Page):
             goal=goal,
             highlight=len(days) - 1,
             fmt="{:g}",
-        ).grid(row=0, column=0, sticky="ew")
+        )
+        chart.unit = " h"
+        chart.full_labels = [f"{d:%b} {d.day}" for d in days]
+        chart.grid(row=0, column=0, sticky="ew")
         return card
 
     def _heart_chart(self, master) -> widgets.Card:

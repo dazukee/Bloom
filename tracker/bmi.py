@@ -5,7 +5,7 @@ Pure logic: no customtkinter, no file access.
 Reference values:
     CDC adult categories (ages 20 and older): below 18.5 underweight,
     18.5 to below 25 healthy weight, 25 to below 30 overweight, 30 and above
-    obesity.
+    obesity (class 1 below 35, class 2 below 40, class 3 from 40).
     Asia-Pacific cut-offs (WHO Western Pacific Region, 2000): below 18.5
     underweight, 18.5 to below 23 healthy, 23 to below 25 overweight,
     25 to below 30 obesity class I, 30 and above obesity class II.
@@ -87,6 +87,15 @@ def category_color(bmi: float, standard: str = CDC) -> str:
         if bmi < upper_limit:
             return color_name
     return "danger"
+
+
+def obesity_class(bmi: float) -> int | None:
+    """Return the CDC obesity class (1, 2 or 3) for an adult BMI, or None."""
+    if bmi < 30:
+        return None
+    if bmi < 35:
+        return 1
+    return 2 if bmi < 40 else 3
 
 
 def healthy_weight_range(height_cm: float, standard: str = CDC) -> tuple[float, float]:
