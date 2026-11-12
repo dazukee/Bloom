@@ -1,8 +1,8 @@
 # Bloom: BMI & Female Health Tracker
 
-A desktop app for women's health: BMI and weight, periods and ovulation, basal body temperature, moods and symptoms, vital signs and sleep, activity, and nutrition. Each person has a private, password-protected account, and the app gives personal insights from their own logs. Built entirely in Python with CustomTkinter for COMPE 02: Programming Logic and Design.
+A desktop app for women's health that calculates: BMI and weight, periods and ovulation, basal body temperature, moods and symptoms, vital signs and sleep, activity, and nutrition. Each person has their own respective private, password-protected account, and the app gives personal insights from their very own logs. It is built entirely in Python with CustomTkinter for out subject, COMPE02: Programming Logic and Design.
 
-> Bloom gives general wellness information and estimates. It is not a medical device, does not diagnose, and its fertile-window predictions are not birth control.
+> Bloom gives general wellness information and estimates. It is NOT a medical device. It does not diagnose, and its fertile-window predictions are not birth control.
 
 ## Features
 
@@ -33,8 +33,8 @@ A whole Settings tab, with one-click setups for low vision, dyslexia, motion sen
 
 The window adapts to the screen: it opens at about 84% of the screen, cards reflow between 1, 2 and 3 columns, and on a narrow window or with large text the sidebar becomes an icon rail.
 
-## Set up (once)
-
+## Set-up (once)
+Here's what you need to do to set it up:
 Python 3.14 on Windows (it reports Tk 8.6). On a Mac where the check below prints Tk 9.x, use Python 3.13.
 
 ```powershell
@@ -45,6 +45,8 @@ python -c "import sys, tkinter; print(sys.version, tkinter.TkVersion)"
 ```
 
 On macOS, activate with `source .venv/bin/activate`.
+
+AFTER this, your app is ready.
 
 ## Everyday commands
 
